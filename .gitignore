@@ -1,0 +1,22 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+functions/node_modules/
+web/node_modules/
+
+# Build output
+functions/lib/
+web/.next/
+web/out/
+
+# Firebase
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+
+# macOS
+.DS_Store
