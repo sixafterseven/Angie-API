@@ -4,11 +4,14 @@ import {getStorage} from 'firebase-admin/storage';
 import {logger} from 'firebase-functions';
 import {setGlobalOptions} from 'firebase-functions/v2';
 import {onDocumentCreated} from 'firebase-functions/v2/firestore';
+import {beforeUserSignedIn} from 'firebase-functions/v2/identity';
 import {onObjectFinalized} from 'firebase-functions/v2/storage';
 import ExcelJS from 'exceljs';
 import {tmpdir} from 'os';
 import {join} from 'path';
 import {unlink} from 'fs/promises';
+
+import {assertApprovedEmployeeSignIn} from './employee-allowlist';
 
 initializeApp();
 
@@ -18,6 +21,26 @@ setGlobalOptions({
 });
 
 const db = getFirestore();
+
+/*
+ * Rejects sign-in for any account that is not an approved employee.
+ *
+ * This runs inside Firebase Authentication before a sign-in completes, so an
+ * unapproved Google account never receives a session or an ID token at all.
+ * That makes it the real boundary; the frontend allowlist and the Ask Angie
+ * API check remain in place as defence in depth.
+ *
+ * Requires Firebase Authentication with Identity Platform. See the README
+ * section in the pull request for the console step.
+ */
+export const enforceEmployeeAllowlist = beforeUserSignedIn(
+    {
+      region: 'us-east1',
+    },
+    (event) => {
+      assertApprovedEmployeeSignIn(event);
+    },
+);
 
 const ALLOWED_EXTENSIONS = new Set(['csv', 'xlsx', 'xls', 'pdf']);
 
