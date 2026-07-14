@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 
 import { auth } from "@/lib/firebase";
+import { ACCESS_DENIED_KEY, isApprovedEmployee } from "@/lib/authorized-emails";
 
 type AppShellProps = {
   children: ReactNode;
@@ -75,11 +76,28 @@ export default function AppShell({
 
     const unsubscribe = onAuthStateChanged(
       auth,
-      (currentUser) => {
+      async (currentUser) => {
         finished = true;
         window.clearTimeout(timeout);
 
         if (!currentUser) {
+          setCheckingAuth(false);
+          router.replace("/login");
+          return;
+        }
+
+        /*
+         * Every protected page mounts AppShell, so this runs on login, on
+         * refresh, and on any bookmarked URL. An account that is not on the
+         * allowlist is signed straight back out and returned to /login, which
+         * reads the flag below to explain why.
+         */
+        if (!isApprovedEmployee(currentUser.email)) {
+          window.sessionStorage.setItem(ACCESS_DENIED_KEY, "1");
+
+          await signOut(auth);
+
+          setUser(null);
           setCheckingAuth(false);
           router.replace("/login");
           return;
