@@ -1,0 +1,362 @@
+"use client";
+
+import { FormEvent, useState } from "react";
+import { collection, getDocs } from "firebase/firestore";
+import { ArrowUpRight, Loader2, Search } from "lucide-react";
+
+import AppShell from "@/components/app-shell";
+import { db } from "@/lib/firebase";
+
+type Lead = {
+  id: string;
+  businessName?: string;
+  companyName?: string;
+  name?: string;
+  phone?: string;
+  website?: string;
+  city?: string;
+  state?: string;
+  industry?: string;
+  category?: string;
+  rating?: number;
+  validationStatus?: string;
+  pipelineStage?: string;
+};
+
+type AngieFilters = {
+  industry?: string;
+  city?: string;
+  state?: string;
+  website?: boolean;
+  phone?: boolean;
+  limit?: number;
+};
+
+function getBusinessName(lead: Lead): string {
+  return (
+    lead.businessName ?? lead.companyName ?? lead.name ?? "Unnamed business"
+  );
+}
+
+function normalize(value?: string): string {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+function formatPhone(phone?: string): string {
+  if (!phone) {
+    return "No phone";
+  }
+
+  const digits = phone.replace(/\D/g, "");
+
+  if (digits.length === 10) {
+    return (
+      `(${digits.slice(0, 3)}) ` + `${digits.slice(3, 6)}-${digits.slice(6)}`
+    );
+  }
+
+  if (digits.length === 11 && digits.startsWith("1")) {
+    return (
+      `(${digits.slice(1, 4)}) ` + `${digits.slice(4, 7)}-${digits.slice(7)}`
+    );
+  }
+
+  return phone;
+}
+
+function getWebsiteLabel(website?: string): string {
+  if (!website) {
+    return "No website";
+  }
+
+  try {
+    const url = website.startsWith("http") ? website : `https://${website}`;
+
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return website;
+  }
+}
+
+function getWebsiteHref(website?: string): string {
+  if (!website) {
+    return "#";
+  }
+
+  return website.startsWith("http") ? website : `https://${website}`;
+}
+
+function matchesFilters(lead: Lead, filters: AngieFilters): boolean {
+  const leadIndustry = normalize(lead.industry ?? lead.category);
+
+  if (filters.industry && !leadIndustry.includes(normalize(filters.industry))) {
+    return false;
+  }
+
+  if (filters.city && !normalize(lead.city).includes(normalize(filters.city))) {
+    return false;
+  }
+
+  if (filters.state && normalize(lead.state) !== normalize(filters.state)) {
+    return false;
+  }
+
+  if (filters.website === true && !lead.website) {
+    return false;
+  }
+
+  if (filters.website === false && Boolean(lead.website)) {
+    return false;
+  }
+
+  if (filters.phone === true && !lead.phone) {
+    return false;
+  }
+
+  if (filters.phone === false && Boolean(lead.phone)) {
+    return false;
+  }
+
+  return true;
+}
+
+const examples = [
+  "Show me dentists in Atlanta",
+  "Show me medical spas",
+  "Find businesses without websites",
+  "Show me chiropractors with phone numbers",
+  "Give me 20 leads in Georgia",
+];
+
+export default function AskAngiePage() {
+  const [question, setQuestion] = useState("");
+  const [results, setResults] = useState<Lead[]>([]);
+  const [filters, setFilters] = useState<AngieFilters | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [error, setError] = useState("");
+
+  async function askAngie(submittedQuestion: string) {
+    const trimmedQuestion = submittedQuestion.trim();
+
+    if (!trimmedQuestion) {
+      return;
+    }
+
+    setQuestion(trimmedQuestion);
+    setLoading(true);
+    setHasSearched(true);
+    setError("");
+    setResults([]);
+
+    try {
+      const response = await fetch("/api/ask-angie", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          question: trimmedQuestion,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Angie could not understand that request.");
+      }
+
+      const parsedFilters = (await response.json()) as AngieFilters;
+
+      setFilters(parsedFilters);
+
+      const snapshot = await getDocs(collection(db, "leads"));
+
+      const allLeads = snapshot.docs.map((leadDocument) => ({
+        id: leadDocument.id,
+        ...leadDocument.data(),
+      })) as Lead[];
+
+      const matchingLeads = allLeads.filter((lead) =>
+        matchesFilters(lead, parsedFilters),
+      );
+
+      const requestedLimit =
+        typeof parsedFilters.limit === "number" && parsedFilters.limit > 0
+          ? parsedFilters.limit
+          : 50;
+
+      setResults(matchingLeads.slice(0, requestedLimit));
+    } catch (caughtError) {
+      const message =
+        caughtError instanceof Error
+          ? caughtError.message
+          : "Angie could not complete the search.";
+
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void askAngie(question);
+  }
+
+  return (
+    <AppShell
+      title="Ask Angie"
+      description="Search your sales-ready leads using plain English."
+    >
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <form
+          onSubmit={handleSubmit}
+          className="flex flex-col gap-3 sm:flex-row"
+        >
+          <div className="relative flex-1">
+            <Search
+              size={19}
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+            />
+
+            <input
+              type="text"
+              value={question}
+              onChange={(event) => {
+                setQuestion(event.target.value);
+              }}
+              placeholder="Show me dentists in Atlanta..."
+              className="w-full rounded-xl border border-slate-300 py-3 pl-11 pr-4 text-sm outline-none transition focus:border-slate-950 focus:ring-2 focus:ring-slate-950/10"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading || !question.trim()}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loading ? <Loader2 size={18} className="animate-spin" /> : null}
+
+            {loading ? "Searching..." : "Ask Angie"}
+          </button>
+        </form>
+
+        <div className="mt-5 flex flex-wrap gap-2">
+          {examples.map((example) => (
+            <button
+              key={example}
+              type="button"
+              onClick={() => {
+                void askAngie(example);
+              }}
+              disabled={loading}
+              className="rounded-full border border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:bg-slate-50 hover:text-slate-950 disabled:opacity-50"
+            >
+              {example}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {filters ? (
+        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Angie understood
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {Object.entries(filters).map(([key, value]) => (
+              <span
+                key={key}
+                className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700"
+              >
+                {key}: {String(value)}
+              </span>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+          <div>
+            <h2 className="font-semibold text-slate-950">Results</h2>
+
+            <p className="mt-1 text-sm text-slate-500">
+              {loading
+                ? "Angie is searching your leads."
+                : `${results.length} lead${
+                    results.length === 1 ? "" : "s"
+                  } found`}
+            </p>
+          </div>
+        </div>
+
+        {error ? (
+          <div className="m-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            {error}
+          </div>
+        ) : null}
+
+        {!loading && hasSearched && !error && results.length === 0 ? (
+          <div className="p-10 text-center">
+            <p className="font-medium text-slate-800">
+              No matching leads found.
+            </p>
+
+            <p className="mt-2 text-sm text-slate-500">
+              Try broadening the location or industry.
+            </p>
+          </div>
+        ) : null}
+
+        {results.map((lead) => (
+          <article
+            key={lead.id}
+            className="grid gap-4 border-b border-slate-200 px-6 py-5 transition last:border-b-0 hover:bg-slate-50 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_auto]"
+          >
+            <div className="min-w-0">
+              <h3 className="truncate font-semibold text-slate-950">
+                {getBusinessName(lead)}
+              </h3>
+
+              <p className="mt-1 text-sm text-slate-500">
+                {[lead.city, lead.state, lead.industry ?? lead.category]
+                  .filter(Boolean)
+                  .join(" • ") || "Location unavailable"}
+              </p>
+            </div>
+
+            <div className="text-sm">
+              <p className="text-slate-700">{formatPhone(lead.phone)}</p>
+
+              {lead.website ? (
+                <a
+                  href={getWebsiteHref(lead.website)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 block truncate font-medium text-blue-700 hover:underline"
+                >
+                  {getWebsiteLabel(lead.website)}
+                </a>
+              ) : (
+                <p className="mt-1 text-slate-400">No website</p>
+              )}
+            </div>
+
+            {lead.website ? (
+              <a
+                href={getWebsiteHref(lead.website)}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={`Open ${getBusinessName(lead)} website`}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
+              >
+                <ArrowUpRight size={18} />
+              </a>
+            ) : null}
+          </article>
+        ))}
+      </section>
+    </AppShell>
+  );
+}
