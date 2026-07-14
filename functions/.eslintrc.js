@@ -21,4 +21,14 @@ module.exports = {
     "valid-jsdoc": "off",
     "max-len": "off",
   },
+  overrides: [
+    {
+      // The node:test suites are plain CommonJS run against the compiled
+      // output in lib/, so require() is the correct import style there.
+      files: ["test/**/*.js"],
+      rules: {
+        "@typescript-eslint/no-require-imports": "off",
+      },
+    },
+  ],
 };
