@@ -26,7 +26,8 @@ service cloud.firestore {
     // The approved employee allowlist.
     function employeeEmails() {
       return [
-        'jason@micahamari.com'
+        'jason@micahamari.com',
+        'admin7@sixafterseven.com'
       ];
     }
 

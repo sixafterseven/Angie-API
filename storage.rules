@@ -27,7 +27,8 @@ service firebase.storage {
     // The approved employee allowlist. Keep in step with firestore.rules.
     function employeeEmails() {
       return [
-        'jason@micahamari.com'
+        'jason@micahamari.com',
+        'admin7@sixafterseven.com'
       ];
     }
 
