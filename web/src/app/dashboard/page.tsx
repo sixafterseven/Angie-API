@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, getDocs } from "firebase/firestore";
+import {
+  collection,
+  getCountFromServer,
+  getDocs,
+  query,
+  where,
+} from "firebase/firestore";
 
 import AppShell from "@/components/app-shell";
 import { auth, db } from "@/lib/firebase";
@@ -22,26 +28,43 @@ export default function DashboardPage() {
   });
 
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     async function loadDashboard() {
-      const [batchSnapshot, leadSnapshot] = await Promise.all([
-        getDocs(collection(db, "batches")),
-        getDocs(collection(db, "leads")),
-      ]);
+      try {
+        // The sales-ready count is a server-side aggregate, so the dashboard
+        // no longer downloads every lead just to count them.
+        const [batchSnapshot, salesReadyCount] = await Promise.all([
+          getDocs(collection(db, "batches")),
+          getCountFromServer(
+            query(
+              collection(db, "leads"),
+              where("pipelineStage", "==", "sales_ready"),
+            ),
+          ),
+        ]);
 
-      const batchRows = batchSnapshot.docs.map((document) => document.data());
+        const batchRows = batchSnapshot.docs.map((document) => document.data());
 
-      setStats({
-        batches: batchRows.length,
-        processing: batchRows.filter((batch) => batch.status === "in_progress")
-          .length,
-        completed: batchRows.filter((batch) => batch.status === "complete")
-          .length,
-        leads: leadSnapshot.size,
-      });
-
-      setLoading(false);
+        setStats({
+          batches: batchRows.length,
+          processing: batchRows.filter(
+            (batch) => batch.status === "in_progress",
+          ).length,
+          completed: batchRows.filter((batch) => batch.status === "complete")
+            .length,
+          leads: salesReadyCount.data().count,
+        });
+      } catch (caughtError) {
+        setError(
+          caughtError instanceof Error
+            ? caughtError.message
+            : "Angie OS could not load your dashboard.",
+        );
+      } finally {
+        setLoading(false);
+      }
     }
 
     void loadDashboard();
@@ -61,6 +84,12 @@ export default function DashboardPage() {
       title={`Good to see you, ${firstName}`}
       description="Here is what Angie OS has ready."
     >
+      {error ? (
+        <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {error}
+        </div>
+      ) : null}
+
       <section className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
         {cards.map(([label, value]) => (
           <article

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { collection, getDocs, orderBy, query } from "firebase/firestore";
+import { collection, getDocs, query, where } from "firebase/firestore";
 
 import AppShell from "@/components/app-shell";
 import { db } from "@/lib/firebase";
@@ -113,9 +113,12 @@ export default function LeadsPage() {
   useEffect(() => {
     async function loadLeads() {
       try {
+        // Only Vera-approved leads belong on this page. Sorting happens in
+        // memory rather than with orderBy, because an orderBy on businessName
+        // would silently drop any lead document missing that field.
         const leadsQuery = query(
           collection(db, "leads"),
-          orderBy("businessName"),
+          where("pipelineStage", "==", "sales_ready"),
         );
 
         const snapshot = await getDocs(leadsQuery);
@@ -124,6 +127,10 @@ export default function LeadsPage() {
           id: leadDocument.id,
           ...leadDocument.data(),
         })) as Lead[];
+
+        loadedLeads.sort((first, second) =>
+          getBusinessName(first).localeCompare(getBusinessName(second)),
+        );
 
         setLeads(loadedLeads);
       } catch (caughtError) {

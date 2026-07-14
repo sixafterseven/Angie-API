@@ -1713,6 +1713,29 @@ export const processVeraValidationJob = onDocumentCreated(
 
       const veraRunRef = db.collection('agentRuns').doc(buildVeraRunId(batchId));
 
+      /*
+       * Lead documents are written before the finalization transaction runs,
+       * so a redelivered event would rewrite every lead in the batch. Because
+       * each lead is merged with a fresh createdAt, that replay would reset
+       * createdAt and overwrite any later edit to validationStatus,
+       * pipelineStage, currentOwner, or priority.
+       *
+       * The completed-run marker is the authority on whether this batch was
+       * already validated, so it is checked before any work begins. The
+       * matching guard inside the finalization transaction is kept as a
+       * backstop for two deliveries racing each other.
+       */
+      const existingVeraRun = await veraRunRef.get();
+
+      if (existingVeraRun.exists) {
+        logger.info('Vera already validated this batch. Skipping replay.', {
+          batchId,
+          jobId,
+        });
+
+        return;
+      }
+
       try {
         await snapshot.ref.set(
             {
