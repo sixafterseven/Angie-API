@@ -1,9 +1,67 @@
 rules_version = '2';
 
+// Angie OS - Cloud Storage security rules.
+//
+// Access model
+// ------------
+// 1. Only employees on the allowlist below may read or upload. This is an
+//    explicit email allowlist, NOT a domain check.
+//
+// 2. Calvin writes the cleaned workbook using the Firebase Admin SDK, which
+//    bypasses security rules entirely. Denying client writes to cleaned/
+//    therefore cannot break the pipeline.
+//
+// Storage layout (do not change without a migration plan):
+//   raw/{batchId}/{filename}      - the original upload, written by the browser
+//   cleaned/{batchId}/{filename}  - Calvin's output, written by the Admin SDK
+//
+// Adding an employee
+// ------------------
+// Add the address to employeeEmails() below, then redeploy:
+//
+//   firebase deploy --only storage
+
 service firebase.storage {
   match /b/{bucket}/o {
+
+    // The approved employee allowlist. Keep in step with firestore.rules.
+    function employeeEmails() {
+      return [
+        'jason@micahamari.com',
+        'admin7@sixafterseven.com'
+      ];
+    }
+
+    function isEmployee() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() in employeeEmails();
+    }
+
+    // Raw uploads - the upload page writes the original workbook here and the
+    // registerRawUpload trigger picks it up.
+    //
+    // Create is allowed but update and delete are not: Clara's contract is that
+    // the original upload is never modified, so the browser must not be able to
+    // overwrite or remove a source file after the pipeline has started reading
+    // it.
+    match /raw/{batchId}/{filename} {
+      allow read: if isEmployee();
+      allow create: if isEmployee();
+      allow update, delete: if false;
+    }
+
+    // Cleaned workbooks - employees may download Calvin's output. Writes are
+    // denied; only Calvin produces these, through the Admin SDK.
+    match /cleaned/{batchId}/{filename} {
+      allow read: if isEmployee();
+      allow write: if false;
+    }
+
+    // Every other path is denied to the client.
     match /{allPaths=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 }

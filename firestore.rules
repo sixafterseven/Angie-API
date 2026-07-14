@@ -1,10 +1,100 @@
-
 rules_version = '2';
+
+// Angie OS - Firestore security rules.
+//
+// Access model
+// ------------
+// 1. Only employees on the allowlist below may read anything. Google sign-in
+//    is unchanged; these rules only decide what a signed-in user may then do.
+//    This is deliberately an explicit email allowlist and NOT a domain check,
+//    so a new Google account on any domain cannot grant itself access.
+//
+// 2. The client may never write. Every document in this database is created by
+//    the Clara, Calvin and Vera Cloud Functions using the Firebase Admin SDK,
+//    which bypasses security rules entirely. Denying all client writes
+//    therefore cannot break the pipeline.
+//
+// Adding an employee
+// ------------------
+// Add the address to employeeEmails() below, then redeploy:
+//
+//   firebase deploy --only firestore:rules
 
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // The approved employee allowlist.
+    function employeeEmails() {
+      return [
+        'jason@micahamari.com',
+        'admin7@sixafterseven.com'
+      ];
+    }
+
+    // A caller is an employee only if they are signed in with a verified
+    // Google address that appears on the allowlist. The address is lowercased
+    // before comparison so casing in the token cannot bypass the list.
+    function isEmployee() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() in employeeEmails();
+    }
+
+    // Batches - employees watch pipeline progress here.
+    //
+    // Writes are denied. The pipeline status fields (currentStage,
+    // currentOwner, status, approvedLeadCount) are owned by Clara, Calvin and
+    // Vera; a browser must never be able to move a batch through the pipeline.
+    match /batches/{batchId} {
+      allow read: if isEmployee();
+      allow write: if false;
+    }
+
+    // Leads - employees may read sales-ready leads only.
+    //
+    // Vera writes approved, needs_review AND suppressed leads into this
+    // collection. Because this rule tests resource.data, Firestore requires a
+    // query to be provably limited to sales-ready documents: a query that
+    // constrains pipelineStage == 'sales_ready' is allowed, while an
+    // unconstrained read of the whole collection is rejected. needs_review and
+    // suppressed leads are therefore never exposed to the browser at all.
+    //
+    // Writes are denied. pipelineStage, validationStatus, currentOwner and
+    // priority are owned by Vera.
+    match /leads/{leadId} {
+      allow read: if isEmployee()
+        && resource.data.pipelineStage == 'sales_ready';
+      allow write: if false;
+    }
+
+    // Pipeline bookkeeping - readable for troubleshooting, never writable.
+    //
+    // A client that could create a job document could drive the pipeline
+    // directly, so writes here are denied outright.
+    match /jobs/{jobId} {
+      allow read: if isEmployee();
+      allow write: if false;
+    }
+
+    match /agentRuns/{runId} {
+      allow read: if isEmployee();
+      allow write: if false;
+    }
+
+    match /batchSummaries/{batchId} {
+      allow read: if isEmployee();
+      allow write: if false;
+    }
+
+    // Everything else is denied to the client. This covers the legacy test
+    // collections (agent_runs, batch_summaries, job) and the collections that
+    // are declared but not yet used (users, activities, reports).
+    //
+    // Rules are permissive-union, so this block cannot revoke an allow granted
+    // above; it exists to state the default and to catch new collections.
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 }
