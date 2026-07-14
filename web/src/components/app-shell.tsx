@@ -1,9 +1,9 @@
 "use client";
 
-import {ReactNode, useEffect, useState} from "react";
+import { ReactNode, useEffect, useState } from "react";
 import Link from "next/link";
-import {usePathname, useRouter} from "next/navigation";
-import {onAuthStateChanged, signOut, User} from "firebase/auth";
+import { usePathname, useRouter } from "next/navigation";
+import { onAuthStateChanged, signOut, User } from "firebase/auth";
 import {
   Bot,
   Database,
@@ -13,7 +13,7 @@ import {
   Users,
 } from "lucide-react";
 
-import {auth} from "@/lib/firebase";
+import { auth } from "@/lib/firebase";
 
 type AppShellProps = {
   children: ReactNode;
@@ -59,22 +59,53 @@ export default function AppShell({
 
   const [user, setUser] = useState<User | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
+  const [authError, setAuthError] = useState("");
 
   useEffect(() => {
+    let finished = false;
+
+    const timeout = window.setTimeout(() => {
+      if (!finished) {
+        setAuthError(
+          "Authentication took too long. Refresh the page or sign in again.",
+        );
+        setCheckingAuth(false);
+      }
+    }, 8000);
+
     const unsubscribe = onAuthStateChanged(
       auth,
       (currentUser) => {
+        finished = true;
+        window.clearTimeout(timeout);
+
         if (!currentUser) {
+          setCheckingAuth(false);
           router.replace("/login");
           return;
         }
 
         setUser(currentUser);
         setCheckingAuth(false);
-      }
+      },
+      (error) => {
+        finished = true;
+        window.clearTimeout(timeout);
+
+        console.error("Firebase authentication error:", error);
+
+        setAuthError(
+          "Angie OS could not verify your login. Please sign in again.",
+        );
+        setCheckingAuth(false);
+      },
     );
 
-    return unsubscribe;
+    return () => {
+      finished = true;
+      window.clearTimeout(timeout);
+      unsubscribe();
+    };
   }, [router]);
 
   async function handleSignOut() {
@@ -84,12 +115,40 @@ export default function AppShell({
 
   if (checkingAuth) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-950">
-        <p className="text-sm text-slate-400">
-          Opening Angie OS...
-        </p>
+      <main className="flex min-h-screen items-center justify-center bg-slate-100">
+        <div className="rounded-2xl border border-slate-200 bg-white px-8 py-6 shadow-sm">
+          <p className="text-sm font-medium text-slate-700">
+            Opening Angie OS...
+          </p>
+        </div>
       </main>
     );
+  }
+
+  if (authError) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
+        <section className="w-full max-w-md rounded-2xl border border-red-200 bg-white p-8 shadow-sm">
+          <h1 className="text-xl font-bold text-slate-950">Login problem</h1>
+
+          <p className="mt-3 text-sm leading-6 text-slate-600">{authError}</p>
+
+          <button
+            type="button"
+            onClick={() => {
+              router.replace("/login");
+            }}
+            className="mt-6 w-full rounded-xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            Return to login
+          </button>
+        </section>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return null;
   }
 
   return (
@@ -100,13 +159,9 @@ export default function AppShell({
             Micah Amari
           </p>
 
-          <h1 className="mt-2 text-2xl font-bold">
-            Angie OS
-          </h1>
+          <h1 className="mt-2 text-2xl font-bold">Angie OS</h1>
 
-          <p className="mt-1 text-sm text-slate-400">
-            Sales Operations
-          </p>
+          <p className="mt-1 text-sm text-slate-400">Sales Operations</p>
         </div>
 
         <nav className="flex-1 space-y-1 p-4">
@@ -121,9 +176,9 @@ export default function AppShell({
                 className={[
                   "flex items-center gap-3 rounded-xl px-4 py-3",
                   "text-sm font-medium transition",
-                  active ?
-                    "bg-white text-slate-950" :
-                    "text-slate-300 hover:bg-slate-900 hover:text-white",
+                  active
+                    ? "bg-white text-slate-950"
+                    : "text-slate-300 hover:bg-slate-900 hover:text-white",
                 ].join(" ")}
               >
                 <Icon size={19} />
@@ -136,12 +191,10 @@ export default function AppShell({
         <div className="border-t border-slate-800 p-4">
           <div className="mb-3 px-3">
             <p className="truncate text-sm font-medium">
-              {user?.displayName || "Micah Amari Employee"}
+              {user.displayName || "Micah Amari Employee"}
             </p>
 
-            <p className="truncate text-xs text-slate-400">
-              {user?.email}
-            </p>
+            <p className="truncate text-xs text-slate-400">{user.email}</p>
           </div>
 
           <button
@@ -158,21 +211,15 @@ export default function AppShell({
       <div className="lg:pl-64">
         <header className="border-b border-slate-200 bg-white px-6 py-5 lg:px-10">
           <div className="mx-auto max-w-7xl">
-            <h2 className="text-2xl font-bold tracking-tight">
-              {title}
-            </h2>
+            <h2 className="text-2xl font-bold tracking-tight">{title}</h2>
 
             {description ? (
-              <p className="mt-1 text-sm text-slate-500">
-                {description}
-              </p>
+              <p className="mt-1 text-sm text-slate-500">{description}</p>
             ) : null}
           </div>
         </header>
 
-        <main className="mx-auto max-w-7xl p-6 lg:p-10">
-          {children}
-        </main>
+        <main className="mx-auto max-w-7xl p-6 lg:p-10">{children}</main>
       </div>
     </div>
   );
