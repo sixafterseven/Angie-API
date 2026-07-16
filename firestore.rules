@@ -2,97 +2,212 @@ rules_version = '2';
 
 // Angie OS - Firestore security rules.
 //
-// Access model
-// ------------
-// 1. Only employees on the allowlist below may read anything. Google sign-in
-//    is unchanged; these rules only decide what a signed-in user may then do.
-//    This is deliberately an explicit email allowlist and NOT a domain check,
-//    so a new Google account on any domain cannot grant itself access.
+// Authorization model
+// -------------------
+// Membership lives in the `users` collection: one document per employee, keyed
+// by lowercase email, with `active` and a `permissions` map. A caller is an
+// active employee only when their own users doc exists AND active == true.
+// Fine-grained actions additionally require a permission flag. This is data,
+// not a hardcoded list, and never a domain check. Everything fails closed.
 //
-// 2. The client may never write. Every document in this database is created by
-//    the Clara, Calvin and Vera Cloud Functions using the Firebase Admin SDK,
-//    which bypasses security rules entirely. Denying all client writes
-//    therefore cannot break the pipeline.
-//
-// Adding an employee
-// ------------------
-// Add the address to employeeEmails() below, then redeploy:
-//
-//   firebase deploy --only firestore:rules
+// The client never writes pipeline data or the users/knowledgeContent/activities
+// collections — those are written only by Cloud Functions via the Admin SDK,
+// which bypasses these rules.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // The approved employee allowlist.
-    function employeeEmails() {
-      return [
-        'jason@micahamari.com',
-        'admin7@sixafterseven.com'
-      ];
-    }
-
-    // A caller is an employee only if they are signed in with a verified
-    // Google address that appears on the allowlist. The address is lowercased
-    // before comparison so casing in the token cannot bypass the list.
-    function isEmployee() {
+    function isSignedIn() {
       return request.auth != null
         && request.auth.token.email != null
-        && request.auth.token.email_verified == true
-        && request.auth.token.email.lower() in employeeEmails();
+        && request.auth.token.email_verified == true;
     }
 
-    // Batches - employees watch pipeline progress here.
-    //
-    // Writes are denied. The pipeline status fields (currentStage,
-    // currentOwner, status, approvedLeadCount) are owned by Clara, Calvin and
-    // Vera; a browser must never be able to move a batch through the pipeline.
+    // The caller's normalized email = their users document ID.
+    function callerEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(callerEmail())).data;
+    }
+
+    // True only when the caller has an active users document.
+    function isActiveEmployee() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(callerEmail()))
+        && userDoc().active == true;
+    }
+
+    // True when an active employee holds the named permission flag.
+    function perm(name) {
+      return isActiveEmployee()
+        && userDoc().get('permissions', {}).get(name, false) == true;
+    }
+
+    // ---- Validation helpers ----
+
+    function validKnowledgeSource(d) {
+      return d.title is string && d.title.size() > 0 && d.title.size() <= 200
+        && d.slug is string
+        && d.category is string && d.subcategory is string
+        && d.documentType is string
+        && d.storagePath is string
+          && d.storagePath.matches('^knowledge/[^/]+/[^/]+/.+')
+        && d.mimeType is string
+        && d.status in ['draft', 'active', 'archived']
+        && d.version is int && d.version >= 1
+        && d.sourceVersion is int && d.sourceVersion >= 1
+        && d.isAuthoritative is bool
+        && d.allowedAgents is list
+        && d.tags is list
+        && d.industries is list
+        && d.relatedSources is list
+        && d.priority is number
+        && d.processingStatus in ['pending', 'processing', 'ready', 'failed']
+        && d.createdBy is string && d.updatedBy is string
+        && d.owner is string
+        && d.domain in ['company', 'sales', 'marketing', 'operations',
+                        'industries', 'research', 'other']
+        && d.importance in ['required', 'recommended', 'optional', 'reference'];
+    }
+
+    function validResearchReport(d) {
+      return d.title is string && d.title.size() > 0
+        && d.slug is string
+        && d.summary is string
+        && d.sources is list
+        && d.industry is string
+        && d.geography is string
+        && d.researchType is string
+        && d.confidence is number && d.confidence >= 0 && d.confidence <= 1
+        && d.status in ['draft', 'active', 'archived']
+        && d.createdBy is string && d.updatedBy is string;
+    }
+
+    // ---- users: the membership + permission directory ----
+    // A signed-in user may read ONLY their own document (so the app can check
+    // active/permissions). No client writes: access is provisioned by the Admin
+    // SDK (bootstrap script / future admin tooling), never from a browser.
+    match /users/{userId} {
+      allow read: if isSignedIn() && userId == callerEmail();
+      allow create, update, delete: if false;
+    }
+
+    // ---- Existing pipeline collections (read-only to clients) ----
     match /batches/{batchId} {
-      allow read: if isEmployee();
+      allow read: if isActiveEmployee();
       allow write: if false;
     }
 
-    // Leads - employees may read sales-ready leads only.
-    //
-    // Vera writes approved, needs_review AND suppressed leads into this
-    // collection. Because this rule tests resource.data, Firestore requires a
-    // query to be provably limited to sales-ready documents: a query that
-    // constrains pipelineStage == 'sales_ready' is allowed, while an
-    // unconstrained read of the whole collection is rejected. needs_review and
-    // suppressed leads are therefore never exposed to the browser at all.
-    //
-    // Writes are denied. pipelineStage, validationStatus, currentOwner and
-    // priority are owned by Vera.
+    // Leads: sales-ready only. The resource.data test forces queries to be
+    // provably limited to sales-ready docs.
     match /leads/{leadId} {
-      allow read: if isEmployee()
+      allow read: if isActiveEmployee()
         && resource.data.pipelineStage == 'sales_ready';
       allow write: if false;
     }
 
-    // Pipeline bookkeeping - readable for troubleshooting, never writable.
-    //
-    // A client that could create a job document could drive the pipeline
-    // directly, so writes here are denied outright.
     match /jobs/{jobId} {
-      allow read: if isEmployee();
+      allow read: if isActiveEmployee();
       allow write: if false;
     }
 
     match /agentRuns/{runId} {
-      allow read: if isEmployee();
+      allow read: if isActiveEmployee();
       allow write: if false;
     }
 
     match /batchSummaries/{batchId} {
-      allow read: if isEmployee();
+      allow read: if isActiveEmployee();
       allow write: if false;
     }
 
-    // Everything else is denied to the client. This covers the legacy test
-    // collections (agent_runs, batch_summaries, job) and the collections that
-    // are declared but not yet used (users, activities, reports).
-    //
-    // Rules are permissive-union, so this block cannot revoke an allow granted
-    // above; it exists to state the default and to catch new collections.
+    // ---- Knowledge system ----
+
+    // knowledgeSources: source metadata (doc ID == slug).
+    //   read   - active sources need knowledgeRead; drafts/archived need write/approve
+    //   create - knowledgeWrite; must start as a pending draft owned by the caller
+    //   update - knowledgeWrite edits drafts; knowledgeApprove activates/archives.
+    //            createdBy is immutable; updatedBy must be the caller; clients may
+    //            only leave processingStatus unchanged or requeue it to 'pending'
+    //            (never processing/ready/failed — the ingestion function owns those).
+    match /knowledgeSources/{slug} {
+      allow read: if isActiveEmployee() && (
+        (perm('knowledgeRead') && resource.data.status == 'active')
+        || perm('knowledgeWrite') || perm('knowledgeApprove')
+      );
+
+      allow create: if perm('knowledgeWrite')
+        && slug == request.resource.data.slug
+        && request.resource.data.status == 'draft'
+        && request.resource.data.processingStatus == 'pending'
+        && request.resource.data.version == 1
+        && request.resource.data.sourceVersion == 1
+        && request.resource.data.createdBy == callerEmail()
+        && request.resource.data.updatedBy == callerEmail()
+        && validKnowledgeSource(request.resource.data);
+
+      allow update: if isActiveEmployee()
+        && request.resource.data.slug == resource.data.slug
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.updatedBy == callerEmail()
+        && (request.resource.data.processingStatus == resource.data.processingStatus
+            || request.resource.data.processingStatus == 'pending')
+        && validKnowledgeSource(request.resource.data)
+        && (
+          (perm('knowledgeWrite')
+            && resource.data.status == 'draft'
+            && request.resource.data.status == 'draft')
+          || (perm('knowledgeApprove')
+            && request.resource.data.status in ['active', 'archived'])
+        );
+
+      allow delete: if false;
+    }
+
+    // knowledgeContent: raw extracted text. Admin-SDK-only writes.
+    match /knowledgeContent/{slug} {
+      allow read: if perm('knowledgeRead');
+      allow write: if false;
+    }
+
+    // researchReports: separate, non-authoritative. Simple write model.
+    match /researchReports/{slug} {
+      allow read: if perm('knowledgeRead');
+
+      allow create: if perm('knowledgeWrite')
+        && slug == request.resource.data.slug
+        && request.resource.data.createdBy == callerEmail()
+        && request.resource.data.updatedBy == callerEmail()
+        && validResearchReport(request.resource.data);
+
+      allow update: if perm('knowledgeWrite')
+        && request.resource.data.slug == resource.data.slug
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.updatedBy == callerEmail()
+        && validResearchReport(request.resource.data);
+
+      allow delete: if false;
+    }
+
+    // knowledgeCollections: taxonomy. Any active employee reads; structural
+    // changes need knowledgeApprove.
+    match /knowledgeCollections/{id} {
+      allow read: if isActiveEmployee();
+      allow create, update: if perm('knowledgeApprove')
+        && request.resource.data.name is string
+        && request.resource.data.slug is string;
+      allow delete: if false;
+    }
+
+    // activities: append-only audit log, written by Cloud Functions only.
+    match /activities/{id} {
+      allow read: if isActiveEmployee();
+      allow write: if false;
+    }
+
+    // Everything else is denied to the client (legacy + unused collections).
     match /{document=**} {
       allow read, write: if false;
     }

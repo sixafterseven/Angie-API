@@ -6,11 +6,8 @@ import { onAuthStateChanged, signInWithPopup, signOut, User } from "firebase/aut
 import { LogIn } from "lucide-react";
 
 import { auth, googleProvider } from "@/lib/firebase";
-import {
-  ACCESS_DENIED_KEY,
-  isApprovedEmployee,
-  UNAUTHORIZED_MESSAGE,
-} from "@/lib/authorized-emails";
+import { ACCESS_DENIED_KEY, UNAUTHORIZED_MESSAGE } from "@/lib/user-access";
+import { verifyActiveEmployee } from "@/lib/user-directory";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -34,8 +31,8 @@ export default function LoginPage() {
       }
 
       // Catches a restored session for an account that has since been removed
-      // from the allowlist.
-      if (currentUser && !isApprovedEmployee(currentUser.email)) {
+      // from the users collection or deactivated.
+      if (currentUser && !(await verifyActiveEmployee(currentUser.email))) {
         await signOut(auth);
 
         setUser(null);
@@ -62,9 +59,10 @@ export default function LoginPage() {
     try {
       const credential = await signInWithPopup(auth, googleProvider);
 
-      // Google sign-in itself is unchanged; approval is checked immediately
-      // afterwards, before the user reaches any part of the app.
-      if (!isApprovedEmployee(credential.user.email)) {
+      // Google sign-in itself is unchanged; membership is checked against the
+      // users collection immediately afterwards, before the user reaches any
+      // part of the app.
+      if (!(await verifyActiveEmployee(credential.user.email))) {
         await signOut(auth);
 
         setUser(null);

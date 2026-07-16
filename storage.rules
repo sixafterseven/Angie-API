@@ -2,64 +2,60 @@ rules_version = '2';
 
 // Angie OS - Cloud Storage security rules.
 //
-// Access model
-// ------------
-// 1. Only employees on the allowlist below may read or upload. This is an
-//    explicit email allowlist, NOT a domain check.
+// Authorization mirrors Firestore: membership + permissions live in the
+// `users` collection, which these rules cross-check with firestore.get. Never a
+// domain check; fails closed.
 //
-// 2. Calvin writes the cleaned workbook using the Firebase Admin SDK, which
-//    bypasses security rules entirely. Denying client writes to cleaned/
-//    therefore cannot break the pipeline.
-//
-// Storage layout (do not change without a migration plan):
-//   raw/{batchId}/{filename}      - the original upload, written by the browser
-//   cleaned/{batchId}/{filename}  - Calvin's output, written by the Admin SDK
-//
-// Adding an employee
-// ------------------
-// Add the address to employeeEmails() below, then redeploy:
-//
-//   firebase deploy --only storage
+// Layout:
+//   raw/{batchId}/{filename}                       - browser upload (pipeline)
+//   cleaned/{batchId}/{filename}                   - Calvin's Admin-SDK output
+//   knowledge/{category}/{subcategory}/{filename}  - knowledge source originals
 
 service firebase.storage {
   match /b/{bucket}/o {
 
-    // The approved employee allowlist. Keep in step with firestore.rules.
-    function employeeEmails() {
-      return [
-        'jason@micahamari.com',
-        'admin7@sixafterseven.com'
-      ];
-    }
-
-    function isEmployee() {
+    function isSignedIn() {
       return request.auth != null
         && request.auth.token.email != null
-        && request.auth.token.email_verified == true
-        && request.auth.token.email.lower() in employeeEmails();
+        && request.auth.token.email_verified == true;
     }
 
-    // Raw uploads - the upload page writes the original workbook here and the
-    // registerRawUpload trigger picks it up.
-    //
-    // Create is allowed but update and delete are not: Clara's contract is that
-    // the original upload is never modified, so the browser must not be able to
-    // overwrite or remove a source file after the pipeline has started reading
-    // it.
+    function userPath() {
+      return /databases/(default)/documents/users/$(request.auth.token.email.lower());
+    }
+
+    function isActiveEmployee() {
+      return isSignedIn()
+        && firestore.exists(userPath())
+        && firestore.get(userPath()).data.active == true;
+    }
+
+    function perm(name) {
+      return isActiveEmployee()
+        && firestore.get(userPath()).data.get('permissions', {}).get(name, false) == true;
+    }
+
+    // Raw uploads - create-only; the source file is never overwritten/removed.
     match /raw/{batchId}/{filename} {
-      allow read: if isEmployee();
-      allow create: if isEmployee();
+      allow read: if isActiveEmployee();
+      allow create: if isActiveEmployee();
       allow update, delete: if false;
     }
 
-    // Cleaned workbooks - employees may download Calvin's output. Writes are
-    // denied; only Calvin produces these, through the Admin SDK.
+    // Cleaned workbooks - read-only; only Calvin writes via the Admin SDK.
     match /cleaned/{batchId}/{filename} {
-      allow read: if isEmployee();
+      allow read: if isActiveEmployee();
       allow write: if false;
     }
 
-    // Every other path is denied to the client.
+    // Knowledge source originals - permission-gated (knowledgeRead to read,
+    // knowledgeWrite to upload/replace).
+    match /knowledge/{category}/{subcategory}/{filename} {
+      allow read: if perm('knowledgeRead');
+      allow write: if perm('knowledgeWrite');
+    }
+
+    // Everything else is denied to the client.
     match /{allPaths=**} {
       allow read, write: if false;
     }
