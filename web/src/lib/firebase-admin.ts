@@ -3,7 +3,13 @@ import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import type { DecodedIdToken } from "firebase-admin/auth";
 
-import { isApprovedEmployee, UNAUTHORIZED_MESSAGE } from "@/lib/authorized-emails";
+import {
+  isActiveUserRecord,
+  normalizeEmail,
+  UNAUTHORIZED_MESSAGE,
+  UserRecord,
+  USERS_COLLECTION,
+} from "@/lib/user-access";
 
 /**
  * Raised when a request does not carry a usable Firebase ID token.
@@ -33,15 +39,15 @@ export function getAdminDb() {
 
 /**
  * Verifies the Firebase ID token on an incoming request and confirms the
- * caller is an approved employee.
+ * caller has an active `users` document.
  *
- * The allowlist is enforced here as well as in the browser because this route
- * reads Firestore through the Admin SDK, which bypasses security rules. Without
- * this check, a signed-in but unapproved account could still reach lead data by
- * calling the API directly.
+ * Membership is checked here as well as in the browser because this route reads
+ * Firestore through the Admin SDK, which bypasses security rules. The Admin
+ * read below therefore sees the user document regardless of the client
+ * self-read restriction.
  *
  * Throws AuthError when the token is missing, malformed, expired, revoked, or
- * belongs to an account that is not on the allowlist.
+ * belongs to an account without an active `users` document.
  */
 export async function requireUser(request: Request): Promise<DecodedIdToken> {
   const header = request.headers.get("authorization") ?? "";
@@ -60,7 +66,18 @@ export async function requireUser(request: Request): Promise<DecodedIdToken> {
     throw new AuthError("Your session expired. Sign in again.");
   }
 
-  if (!isApprovedEmployee(decoded.email)) {
+  const normalized = normalizeEmail(decoded.email);
+
+  if (!normalized) {
+    throw new AuthError(UNAUTHORIZED_MESSAGE);
+  }
+
+  const snapshot = await getAdminDb()
+    .collection(USERS_COLLECTION)
+    .doc(normalized)
+    .get();
+
+  if (!isActiveUserRecord(snapshot.data() as UserRecord | undefined)) {
     throw new AuthError(UNAUTHORIZED_MESSAGE);
   }
 

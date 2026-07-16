@@ -3,12 +3,16 @@ import {FieldValue, getFirestore} from 'firebase-admin/firestore';
 import {getStorage} from 'firebase-admin/storage';
 import {logger} from 'firebase-functions';
 import {setGlobalOptions} from 'firebase-functions/v2';
-import {onDocumentCreated} from 'firebase-functions/v2/firestore';
+import {
+  onDocumentCreated,
+  onDocumentWritten,
+} from 'firebase-functions/v2/firestore';
 import {onObjectFinalized} from 'firebase-functions/v2/storage';
 import ExcelJS from 'exceljs';
+import {createHash} from 'crypto';
 import {tmpdir} from 'os';
 import {join} from 'path';
-import {unlink} from 'fs/promises';
+import {unlink, writeFile} from 'fs/promises';
 
 initializeApp();
 
@@ -18,6 +22,323 @@ setGlobalOptions({
 });
 
 const db = getFirestore();
+
+// ===========================================================================
+// Knowledge system
+// ===========================================================================
+
+/** MIME types / extensions the ingestion step can extract raw text from. */
+const KNOWLEDGE_XLSX_MIME =
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+/**
+ * Extracts raw text from a supported knowledge source file. Returns null for
+ * unsupported types (PDF/DOCX/etc.), which the caller records as a failure.
+ *
+ * @param {Buffer} buffer The downloaded file bytes.
+ * @param {string} mimeType The source mimeType.
+ * @param {string} storagePath The Storage path (used for the file extension).
+ * @return {Promise<string | null>} Extracted text, or null when unsupported.
+ */
+async function extractKnowledgeText(
+    buffer: Buffer,
+    mimeType: string,
+    storagePath: string,
+): Promise<string | null> {
+  const extension = storagePath.split('.').pop()?.toLowerCase() ?? '';
+
+  if (
+    mimeType === 'text/plain' ||
+    mimeType === 'text/csv' ||
+    extension === 'txt' ||
+    extension === 'csv'
+  ) {
+    return buffer.toString('utf8');
+  }
+
+  if (mimeType === KNOWLEDGE_XLSX_MIME || extension === 'xlsx') {
+    // Mirror the pipeline's proven pattern: read from a temp file (xlsx.load's
+    // Buffer typing conflicts with the current @types/node Buffer generic).
+    const localPath = join(
+        tmpdir(),
+        `knowledge-${createHash('md5').update(storagePath).digest('hex')}.xlsx`,
+    );
+
+    await writeFile(localPath, buffer);
+
+    try {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(localPath);
+
+      const lines: string[] = [];
+
+      workbook.eachSheet((sheet) => {
+        sheet.eachRow({includeEmpty: false}, (row) => {
+          const values = Array.isArray(row.values) ?
+            row.values.slice(1) :
+            [];
+
+          lines.push(
+              values.map((value) => cellToString(value as ExcelJS.CellValue))
+                  .join('\t'),
+          );
+        });
+      });
+
+      return lines.join('\n');
+    } finally {
+      await unlink(localPath).catch(() => undefined);
+    }
+  }
+
+  return null;
+}
+
+/** Names the extractor used, for the knowledgeContent record. */
+function knowledgeExtractor(mimeType: string, storagePath: string): string {
+  const extension = storagePath.split('.').pop()?.toLowerCase() ?? '';
+
+  if (mimeType === KNOWLEDGE_XLSX_MIME || extension === 'xlsx') {
+    return 'exceljs';
+  }
+
+  return 'utf8';
+}
+
+/**
+ * Ingestion: extract raw text from a knowledge source's file and store it as
+ * knowledgeContent. Reprocessable — runs whenever a source is `pending` (new,
+ * reset, or a new version queued): pending -> processing -> ready | failed.
+ *
+ * A source becomes `ready` ONLY when usable text was extracted. Unsupported
+ * types (PDF/DOCX/etc.) and extraction errors become `failed` with a clear
+ * processingError; the source record is preserved either way. Idempotent under
+ * at-least-once delivery via a transactional pending->processing claim, and
+ * content is written to a deterministic doc so retries never duplicate it.
+ */
+export const knowledgeIngestion = onDocumentWritten(
+    {
+      document: 'knowledgeSources/{slug}',
+      region: 'us-east1',
+      retry: false,
+      memory: '512MiB',
+      timeoutSeconds: 120,
+    },
+    async (event) => {
+      const slug = event.params.slug;
+      const after = event.data?.after;
+
+      if (!after || !after.exists) {
+        return;
+      }
+
+      const source = after.data() ?? {};
+
+      // Only act when the source is queued for processing.
+      if (source.processingStatus !== 'pending') {
+        return;
+      }
+
+      const sourceRef = after.ref;
+
+      // Transactionally claim: flip pending -> processing. A redelivered event
+      // or a racing invocation sees non-pending and aborts, so only one worker
+      // proceeds. Setting a non-pending status means our own writes below do
+      // not re-enter this branch (no loop).
+      const claimed = await db.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(sourceRef);
+
+        if (!snapshot.exists || snapshot.data()?.processingStatus !== 'pending') {
+          return false;
+        }
+
+        transaction.update(sourceRef, {
+          processingStatus: 'processing',
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+
+        return true;
+      });
+
+      if (!claimed) {
+        return;
+      }
+
+      const storagePath = String(source.storagePath ?? '');
+      const mimeType = String(source.mimeType ?? '');
+      const sourceVersion = Number(source.sourceVersion ?? 1);
+
+      try {
+        const file = getStorage().bucket().file(storagePath);
+        const [metadata] = await file.getMetadata();
+        const fileGeneration = String(metadata.generation ?? '');
+        const [buffer] = await file.download();
+        const contentHash = createHash('md5').update(buffer).digest('hex');
+
+        const rawText = await extractKnowledgeText(buffer, mimeType, storagePath);
+
+        if (rawText === null) {
+          // Unsupported type: FAIL, never mark ready. Preserve the source.
+          await sourceRef.update({
+            processingStatus: 'failed',
+            processingError:
+              `Text extraction is not supported for ${mimeType || 'this file type'} ` +
+              'yet (only TXT, CSV, and XLSX).',
+            fileGeneration,
+            contentHash,
+            lastProcessedAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+
+          logger.info('Knowledge source unsupported for extraction.', {
+            slug,
+            mimeType,
+          });
+
+          return;
+        }
+
+        // Success: replace the current content (deterministic doc id keeps this
+        // idempotent and overwrites stale content on a version change).
+        await db.collection('knowledgeContent').doc(slug).set({
+          sourceSlug: slug,
+          sourceVersion,
+          rawText,
+          charCount: rawText.length,
+          mimeType,
+          extractor: knowledgeExtractor(mimeType, storagePath),
+          fileGeneration,
+          contentHash,
+          extractedAt: FieldValue.serverTimestamp(),
+        });
+
+        await sourceRef.update({
+          processingStatus: 'ready',
+          processedVersion: sourceVersion,
+          processingError: null,
+          fileGeneration,
+          contentHash,
+          lastProcessedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+
+        logger.info('Knowledge source ingested.', {slug, sourceVersion});
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+
+        await sourceRef.update({
+          processingStatus: 'failed',
+          processingError: `Ingestion failed: ${message}`,
+          lastProcessedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        }).catch(() => undefined);
+
+        logger.error('Knowledge ingestion error.', {slug, error: message});
+      }
+    },
+);
+
+/** System/processing fields that change without being a user-driven edit. */
+const KNOWLEDGE_SYSTEM_FIELDS = new Set([
+  'processingStatus',
+  'processedVersion',
+  'processingError',
+  'fileGeneration',
+  'contentHash',
+  'lastProcessedAt',
+  'updatedAt',
+]);
+
+/** Strips system fields so we can tell a user edit from an ingestion write. */
+function withoutSystemFields(
+    data: FirebaseFirestore.DocumentData,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+
+  for (const key of Object.keys(data)) {
+    if (!KNOWLEDGE_SYSTEM_FIELDS.has(key)) {
+      result[key] = data[key];
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Activity log: append an `activities` entry when a knowledge source is
+ * created, updated, activated, or archived. Processing/system-only writes (from
+ * the ingestion function) are skipped so they do not create activity noise.
+ * Idempotent — keyed by the trigger event id, so a redelivered event does not
+ * duplicate the record.
+ */
+export const onKnowledgeSourceWritten = onDocumentWritten(
+    {
+      document: 'knowledgeSources/{slug}',
+      region: 'us-east1',
+      retry: false,
+    },
+    async (event) => {
+      const slug = event.params.slug;
+      const beforeData = event.data?.before?.exists ?
+        event.data.before.data() :
+        null;
+      const afterData = event.data?.after?.exists ?
+        event.data.after.data() :
+        null;
+
+      if (!afterData) {
+        return;
+      }
+
+      let action: string | null = null;
+
+      if (!beforeData) {
+        action = 'created';
+      } else if (
+        beforeData.status !== 'active' &&
+        afterData.status === 'active'
+      ) {
+        action = 'activated';
+      } else if (
+        beforeData.status !== 'archived' &&
+        afterData.status === 'archived'
+      ) {
+        action = 'archived';
+      } else {
+        const changed =
+          JSON.stringify(withoutSystemFields(beforeData)) !==
+          JSON.stringify(withoutSystemFields(afterData));
+
+        action = changed ? 'updated' : null;
+      }
+
+      // No user-driven change (e.g. an ingestion status flip) — nothing to log.
+      if (!action) {
+        return;
+      }
+
+      // Event id keeps this idempotent: a redelivered event reuses the id, and
+      // create() below then throws ALREADY_EXISTS, which we ignore.
+      const activityId = event.id;
+
+      try {
+        await db.collection('activities').doc(activityId).create({
+          activityId,
+          type: 'knowledge_source',
+          action,
+          documentId: slug,
+          title: afterData.title ?? null,
+          category: afterData.category ?? null,
+          subcategory: afterData.subcategory ?? null,
+          status: afterData.status ?? null,
+          actor: afterData.updatedBy ?? afterData.createdBy ?? null,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+      } catch {
+        logger.info('Activity already logged for this event.', {activityId});
+      }
+    },
+);
 
 const ALLOWED_EXTENSIONS = new Set(['csv', 'xlsx', 'xls', 'pdf']);
 
