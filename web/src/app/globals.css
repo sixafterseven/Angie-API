@@ -24,3 +24,90 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/*
+ * Audrey II — the campy Little Shop of Horrors mascot on the upload page.
+ * Namespaced animations so nothing here leaks into the rest of the app.
+ */
+@keyframes audrey-sway {
+  0%,
+  100% {
+    transform: rotate(-2.5deg);
+  }
+  50% {
+    transform: rotate(2.5deg);
+  }
+}
+
+@keyframes audrey-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+/* Gentle resting chew: the jaw never fully closes when idle. */
+@keyframes audrey-idle-chew {
+  0%,
+  100% {
+    transform: rotate(-8deg);
+  }
+  50% {
+    transform: rotate(-17deg);
+  }
+}
+
+/* A hungry chomp burst, ending mostly closed. */
+@keyframes audrey-chomp {
+  0% {
+    transform: rotate(-32deg);
+  }
+  22% {
+    transform: rotate(-1deg);
+  }
+  44% {
+    transform: rotate(-26deg);
+  }
+  66% {
+    transform: rotate(-2deg);
+  }
+  100% {
+    transform: rotate(-10deg);
+  }
+}
+
+.audrey-sway {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: audrey-sway 4.5s ease-in-out infinite;
+}
+
+.audrey-jaw {
+  transform-box: fill-box;
+  transform-origin: 100% 100%;
+}
+
+.audrey-jaw--idle {
+  animation: audrey-idle-chew 2.6s ease-in-out infinite;
+}
+
+.audrey-jaw--chomp {
+  animation: audrey-chomp 0.75s ease-in-out;
+}
+
+.audrey-bubble {
+  animation: audrey-bob 3.2s ease-in-out infinite;
+}
+
+/* Respect users who ask for less motion: hold everything still. */
+@media (prefers-reduced-motion: reduce) {
+  .audrey-sway,
+  .audrey-jaw--idle,
+  .audrey-jaw--chomp,
+  .audrey-bubble {
+    animation: none;
+  }
+}
