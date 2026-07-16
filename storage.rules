@@ -4,8 +4,10 @@ rules_version = '2';
 //
 // Access model
 // ------------
-// 1. Only employees on the allowlist below may read or upload. This is an
-//    explicit email allowlist, NOT a domain check.
+// 1. Membership lives in the Firestore `users` collection (one active document
+//    per approved employee, keyed by lowercase email). These rules cross-check
+//    that collection with firestore.get, so Storage and Firestore share one
+//    source of truth. Never a domain check.
 //
 // 2. Calvin writes the cleaned workbook using the Firebase Admin SDK, which
 //    bypasses security rules entirely. Denying client writes to cleaned/
@@ -15,28 +17,27 @@ rules_version = '2';
 //   raw/{batchId}/{filename}      - the original upload, written by the browser
 //   cleaned/{batchId}/{filename}  - Calvin's output, written by the Admin SDK
 //
-// Adding an employee
+// Managing employees
 // ------------------
-// Add the address to employeeEmails() below, then redeploy:
-//
-//   firebase deploy --only storage
+// Add, deactivate, or remove an employee by editing their users document
+// (see functions/src/scripts/bootstrap-users.ts). No rules redeploy is needed.
 
 service firebase.storage {
   match /b/{bucket}/o {
 
-    // The approved employee allowlist. Keep in step with firestore.rules.
-    function employeeEmails() {
-      return [
-        'jason@micahamari.com',
-        'admin7@sixafterseven.com'
-      ];
-    }
-
-    function isEmployee() {
+    function isSignedIn() {
       return request.auth != null
         && request.auth.token.email != null
-        && request.auth.token.email_verified == true
-        && request.auth.token.email.lower() in employeeEmails();
+        && request.auth.token.email_verified == true;
+    }
+
+    // True only when the caller has an active users document in Firestore.
+    function isActiveEmployee() {
+      return isSignedIn()
+        && firestore.exists(
+          /databases/(default)/documents/users/$(request.auth.token.email.lower()))
+        && firestore.get(
+          /databases/(default)/documents/users/$(request.auth.token.email.lower())).data.active == true;
     }
 
     // Raw uploads - the upload page writes the original workbook here and the
@@ -47,15 +48,15 @@ service firebase.storage {
     // overwrite or remove a source file after the pipeline has started reading
     // it.
     match /raw/{batchId}/{filename} {
-      allow read: if isEmployee();
-      allow create: if isEmployee();
+      allow read: if isActiveEmployee();
+      allow create: if isActiveEmployee();
       allow update, delete: if false;
     }
 
     // Cleaned workbooks - employees may download Calvin's output. Writes are
     // denied; only Calvin produces these, through the Admin SDK.
     match /cleaned/{batchId}/{filename} {
-      allow read: if isEmployee();
+      allow read: if isActiveEmployee();
       allow write: if false;
     }
 

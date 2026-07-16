@@ -12,20 +12,18 @@
  * It is dry-run by default and prints a full summary. It only makes changes
  * when passed --execute.
  *
- * The approved list is imported from employee-allowlist.ts so this script and
- * the beforeSignIn blocking function stay in agreement — the list is not
- * duplicated here.
+ * The set of accounts to keep is read from the Firestore users collection
+ * (active === true), the same source the blocking function uses — so this
+ * script and sign-in enforcement always agree, with no hardcoded list.
  *
  * Run instructions are at the bottom of this file and in the pull request.
  */
 
 import {getApps, initializeApp} from 'firebase-admin/app';
 import {getAuth, UserRecord} from 'firebase-admin/auth';
+import {getFirestore} from 'firebase-admin/firestore';
 
-import {
-  APPROVED_EMPLOYEE_EMAILS,
-  isApprovedEmployeeEmail,
-} from '../employee-allowlist';
+import {normalizeEmail, USERS_COLLECTION} from '../user-access';
 
 const EXECUTE_FLAG = '--execute';
 
@@ -60,6 +58,34 @@ async function listAllUsers(): Promise<UserRecord[]> {
 }
 
 /**
+ * Loads the set of normalized emails that have an active users document.
+ *
+ * @return {Promise<Set<string>>} Normalized emails to keep active.
+ */
+async function loadActiveEmployeeEmails(): Promise<Set<string>> {
+  const db = getFirestore(getAdminApp());
+
+  const snapshot = await db
+      .collection(USERS_COLLECTION)
+      .where('active', '==', true)
+      .get();
+
+  const emails = new Set<string>();
+
+  snapshot.forEach((doc) => {
+    // The document ID is the normalized email; fall back to the email field.
+    const email = normalizeEmail((doc.data() as {email?: string}).email) ||
+      normalizeEmail(doc.id);
+
+    if (email) {
+      emails.add(email);
+    }
+  });
+
+  return emails;
+}
+
+/**
  * Describes a user for the summary without dumping the whole record.
  *
  * @param {UserRecord} user A Firebase Auth user.
@@ -82,18 +108,28 @@ async function main(): Promise<void> {
         'MODE: DRY RUN — no changes will be made.',
   );
   console.log('');
-  console.log('Approved employees (kept active):');
 
-  for (const email of APPROVED_EMPLOYEE_EMAILS) {
-    console.log(`  - ${email}`);
+  const activeEmails = await loadActiveEmployeeEmails();
+
+  console.log('Approved active employees (from users collection, kept active):');
+
+  if (activeEmails.size === 0) {
+    console.log('  (none — the users collection has no active employees)');
+  } else {
+    for (const email of [...activeEmails].sort()) {
+      console.log(`  - ${email}`);
+    }
   }
 
   console.log('');
 
   const users = await listAllUsers();
 
-  const keep = users.filter((user) => isApprovedEmployeeEmail(user.email));
-  const revoke = users.filter((user) => !isApprovedEmployeeEmail(user.email));
+  const isKept = (user: UserRecord) =>
+    activeEmails.has(normalizeEmail(user.email));
+
+  const keep = users.filter(isKept);
+  const revoke = users.filter((user) => !isKept(user));
 
   console.log(`Total users found: ${users.length}`);
   console.log(`  Keep active:     ${keep.length}`);
@@ -103,7 +139,7 @@ async function main(): Promise<void> {
   console.log('Accounts that will be KEPT active:');
 
   if (keep.length === 0) {
-    console.log('  (none matched the allowlist)');
+    console.log('  (none matched an active users document)');
   } else {
     for (const user of keep) {
       console.log(`  KEEP    ${describe(user)}`);
@@ -128,6 +164,18 @@ async function main(): Promise<void> {
         'Dry run complete. No tokens were revoked and no users were changed.',
     );
     console.log(`Re-run with ${EXECUTE_FLAG} to apply the revocations above.`);
+    return;
+  }
+
+  // Safety guard: if the users collection has no active employees, revoking
+  // "everyone else" would revoke every account. Refuse rather than lock out
+  // the whole project — this usually means the bootstrap script has not run.
+  if (activeEmails.size === 0) {
+    console.error(
+        'Refusing to execute: the users collection has no active employees, ' +
+        'so this would revoke every user. Run bootstrap-users first.',
+    );
+    process.exitCode = 1;
     return;
   }
 

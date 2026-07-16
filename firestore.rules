@@ -4,95 +4,95 @@ rules_version = '2';
 //
 // Access model
 // ------------
-// 1. Only employees on the allowlist below may read anything. Google sign-in
-//    is unchanged; these rules only decide what a signed-in user may then do.
-//    This is deliberately an explicit email allowlist and NOT a domain check,
-//    so a new Google account on any domain cannot grant itself access.
+// 1. Membership lives in the `users` collection: one document per approved
+//    employee, keyed by lowercase email, with an `active` flag. A caller is an
+//    employee only when their own users document exists AND active == true.
+//    This is data, not a hardcoded list, and it is never a domain check.
 //
-// 2. The client may never write. Every document in this database is created by
-//    the Clara, Calvin and Vera Cloud Functions using the Firebase Admin SDK,
-//    which bypasses security rules entirely. Denying all client writes
-//    therefore cannot break the pipeline.
+// 2. The client may never write. Every document is created by the Clara,
+//    Calvin and Vera Cloud Functions using the Firebase Admin SDK, which
+//    bypasses security rules entirely. Denying all client writes cannot break
+//    the pipeline. The users collection is likewise written only by the Admin
+//    SDK (the bootstrap script), never by clients.
 //
-// Adding an employee
+// Managing employees
 // ------------------
-// Add the address to employeeEmails() below, then redeploy:
-//
-//   firebase deploy --only firestore:rules
+// Add, deactivate, or remove an employee by editing their users document
+// (see functions/src/scripts/bootstrap-users.ts). No rules redeploy is needed.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // The approved employee allowlist.
-    function employeeEmails() {
-      return [
-        'jason@micahamari.com',
-        'admin7@sixafterseven.com'
-      ];
-    }
-
-    // A caller is an employee only if they are signed in with a verified
-    // Google address that appears on the allowlist. The address is lowercased
-    // before comparison so casing in the token cannot bypass the list.
-    function isEmployee() {
+    function isSignedIn() {
       return request.auth != null
         && request.auth.token.email != null
-        && request.auth.token.email_verified == true
-        && request.auth.token.email.lower() in employeeEmails();
+        && request.auth.token.email_verified == true;
     }
 
-    // Batches - employees watch pipeline progress here.
+    // The caller's normalized email, used as their users document ID.
+    function callerEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    // True only when the caller has an active users document. Reads that one
+    // document; the result is cached for the duration of the request.
+    function isActiveEmployee() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(callerEmail()))
+        && get(/databases/$(database)/documents/users/$(callerEmail())).data.active == true;
+    }
+
+    // users - the membership directory.
     //
-    // Writes are denied. The pipeline status fields (currentStage,
-    // currentOwner, status, approvedLeadCount) are owned by Clara, Calvin and
-    // Vera; a browser must never be able to move a batch through the pipeline.
+    // A signed-in user may read ONLY their own document (so the app can check
+    // whether they are active). No read of anyone else's document, and no
+    // client writes at all: creating, editing or deleting a users document is
+    // denied, so a client cannot grant or change access. The bootstrap script
+    // writes here through the Admin SDK, which bypasses these rules.
+    match /users/{userId} {
+      allow read: if isSignedIn() && userId == callerEmail();
+      allow create, update, delete: if false;
+    }
+
+    // Batches - employees watch pipeline progress here. No client writes: the
+    // pipeline status fields (currentStage, currentOwner, status,
+    // approvedLeadCount) are owned by Clara, Calvin and Vera.
     match /batches/{batchId} {
-      allow read: if isEmployee();
+      allow read: if isActiveEmployee();
       allow write: if false;
     }
 
-    // Leads - employees may read sales-ready leads only.
-    //
-    // Vera writes approved, needs_review AND suppressed leads into this
-    // collection. Because this rule tests resource.data, Firestore requires a
-    // query to be provably limited to sales-ready documents: a query that
-    // constrains pipelineStage == 'sales_ready' is allowed, while an
-    // unconstrained read of the whole collection is rejected. needs_review and
-    // suppressed leads are therefore never exposed to the browser at all.
-    //
-    // Writes are denied. pipelineStage, validationStatus, currentOwner and
-    // priority are owned by Vera.
+    // Leads - employees may read sales-ready leads only. The resource.data test
+    // forces a query to be provably limited to sales-ready documents, so an
+    // unconstrained read of the collection is rejected and needs_review /
+    // suppressed leads are never exposed. Writes are denied; pipelineStage,
+    // validationStatus, currentOwner and priority are owned by Vera.
     match /leads/{leadId} {
-      allow read: if isEmployee()
+      allow read: if isActiveEmployee()
         && resource.data.pipelineStage == 'sales_ready';
       allow write: if false;
     }
 
-    // Pipeline bookkeeping - readable for troubleshooting, never writable.
-    //
-    // A client that could create a job document could drive the pipeline
-    // directly, so writes here are denied outright.
+    // Pipeline bookkeeping - readable for troubleshooting, never writable. A
+    // client that could create a job document could drive the pipeline.
     match /jobs/{jobId} {
-      allow read: if isEmployee();
+      allow read: if isActiveEmployee();
       allow write: if false;
     }
 
     match /agentRuns/{runId} {
-      allow read: if isEmployee();
+      allow read: if isActiveEmployee();
       allow write: if false;
     }
 
     match /batchSummaries/{batchId} {
-      allow read: if isEmployee();
+      allow read: if isActiveEmployee();
       allow write: if false;
     }
 
     // Everything else is denied to the client. This covers the legacy test
-    // collections (agent_runs, batch_summaries, job) and the collections that
-    // are declared but not yet used (users, activities, reports).
-    //
-    // Rules are permissive-union, so this block cannot revoke an allow granted
-    // above; it exists to state the default and to catch new collections.
+    // collections (agent_runs, batch_summaries, job) and the declared-but-unused
+    // collections (activities, reports).
     match /{document=**} {
       allow read, write: if false;
     }

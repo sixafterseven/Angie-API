@@ -11,7 +11,7 @@ import {tmpdir} from 'os';
 import {join} from 'path';
 import {unlink} from 'fs/promises';
 
-import {assertApprovedEmployeeSignIn} from './employee-allowlist';
+import {assertApprovedEmployeeSignIn, lookupUser} from './user-access';
 
 initializeApp();
 
@@ -23,22 +23,25 @@ setGlobalOptions({
 const db = getFirestore();
 
 /*
- * Rejects sign-in for any account that is not an approved employee.
+ * Rejects sign-in for any account without an active users document.
  *
  * This runs inside Firebase Authentication before a sign-in completes, so an
- * unapproved Google account never receives a session or an ID token at all.
- * That makes it the real boundary; the frontend allowlist and the Ask Angie
- * API check remain in place as defence in depth.
+ * unapproved account never receives a session or an ID token at all. That makes
+ * it the real boundary; the frontend and the Ask Angie API check the same
+ * users collection as defence in depth.
  *
- * Requires Firebase Authentication with Identity Platform. See the README
- * section in the pull request for the console step.
+ * Membership is read from Firestore, so employees can be added or removed by
+ * editing the users collection — no redeploy. Requires Firebase Authentication
+ * with Identity Platform.
  */
 export const enforceEmployeeAllowlist = beforeUserSignedIn(
     {
       region: 'us-east1',
     },
-    (event) => {
-      assertApprovedEmployeeSignIn(event);
+    async (event) => {
+      await assertApprovedEmployeeSignIn(event, (email) =>
+        lookupUser(db, email),
+      );
     },
 );
 
