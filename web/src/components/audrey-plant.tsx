@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 
 /**
  * The stage of the upload flow, so Audrey can react to being fed.
@@ -9,6 +9,8 @@ export type AudreyPhase = "idle" | "ready" | "eating" | "fed";
 
 type AudreyPlantProps = {
   phase: AudreyPhase;
+  onSelectFile: (event: ChangeEvent<HTMLInputElement>) => void;
+  disabled?: boolean;
 };
 
 const BUBBLE_TEXT: Record<AudreyPhase, string> = {
@@ -18,17 +20,129 @@ const BUBBLE_TEXT: Record<AudreyPhase, string> = {
   fed: "Delicious! Got any more?",
 };
 
-/**
- * Audrey II: a campy Little Shop of Horrors plant that "eats" the leads you
- * upload. Purely decorative — it sits beside the real dropzone and never
- * intercepts the file input, so the upload flow is unchanged.
- *
- * The plant chomps whenever a workbook is selected or an upload finishes, and
- * also on click, so it reads as feeding the plant without hiding the controls.
+/*
+ * Retro palette. OUT is the keyline colour, applied as a CSS drop-shadow so the
+ * whole silhouette gets a crisp dark outline.
  */
-export default function AudreyPlant({ phase }: AudreyPlantProps) {
-  // Bumping this key remounts the jaw so a fresh chomp animation replays even
-  // when triggered twice in a row.
+const C = {
+  G1: "#6abe30",
+  G2: "#37946e",
+  G3: "#256b2f",
+  LIP: "#ff5c7a",
+  LIP2: "#d83a5a",
+  THR: "#3a0f1f",
+  TOOTH: "#fbf7e4",
+  POT1: "#e07b2a",
+  POT2: "#a84a1c",
+  SPOT: "#ffd23f",
+  EYE: "#fbf7e4",
+  PUP: "#20123a",
+  TONG: "#e0466b",
+} as const;
+
+type Px = [number, number, number, number, string];
+
+/** A horizontal block centred on cx — the building block for the pixel body. */
+function row(cx: number, y: number, halfWidth: number, h: number, color: string): Px[] {
+  return [[cx - halfWidth, y, halfWidth * 2, h, color]];
+}
+
+/** A row of two-step pixel teeth across [x0, x1]. dir +1 points down, -1 up. */
+function teeth(x0: number, x1: number, yTip: number, dir: 1 | -1): Px[] {
+  const width = 28;
+  const count = Math.floor((x1 - x0) / width);
+  const out: Px[] = [];
+
+  for (let i = 0; i < count; i += 1) {
+    const x = x0 + i * width + 4;
+
+    if (dir > 0) {
+      out.push([x, yTip - 18, 22, 10, C.TOOTH]);
+    } else {
+      out.push([x, yTip, 22, 10, C.TOOTH]);
+    }
+
+    out.push([x + 6, yTip - 8, 10, 8, C.TOOTH]);
+  }
+
+  return out;
+}
+
+// Pot, stem, leaves, throat, lower jaw and tongue — drawn behind the button.
+const BODY: Px[] = [
+  [120, 352, 120, 16, C.POT2],
+  [130, 368, 100, 20, C.POT1],
+  [142, 388, 76, 14, C.POT1],
+  [168, 296, 24, 60, C.G3],
+  [112, 300, 52, 20, C.G2],
+  [100, 312, 42, 16, C.G2],
+  [196, 314, 54, 20, C.G2],
+  [218, 326, 40, 16, C.G2],
+  [92, 214, 176, 70, C.THR],
+  ...row(180, 284, 98, 18, C.G2),
+  ...row(180, 262, 94, 24, C.G1),
+  ...row(180, 244, 84, 20, C.G1),
+  ...row(180, 228, 76, 18, C.G2),
+  [150, 250, 60, 26, C.TONG],
+  [162, 276, 36, 10, C.TONG],
+  ...row(180, 222, 88, 10, C.LIP2),
+  ...teeth(96, 264, 220, -1),
+];
+
+// Upper jaw — drawn on top of the button and animated to chomp.
+const UPPER: Px[] = [
+  ...row(180, 92, 48, 18, C.G2),
+  ...row(180, 110, 70, 18, C.G1),
+  ...row(180, 128, 84, 18, C.G1),
+  ...row(180, 146, 92, 24, C.G2),
+  [118, 116, 16, 16, C.SPOT],
+  [214, 108, 14, 14, C.SPOT],
+  [166, 98, 14, 14, C.SPOT],
+  [124, 126, 28, 24, C.EYE],
+  [124, 126, 11, 24, C.PUP],
+  [118, 118, 36, 8, C.PUP],
+  [208, 126, 28, 24, C.EYE],
+  [225, 126, 11, 24, C.PUP],
+  [206, 118, 36, 8, C.PUP],
+  ...row(180, 170, 88, 10, C.LIP),
+  ...teeth(96, 264, 196, 1),
+];
+
+function Sprite({ pixels, className, style, onAnimationEnd }: {
+  pixels: Px[];
+  className?: string;
+  style?: React.CSSProperties;
+  onAnimationEnd?: () => void;
+}) {
+  return (
+    <svg
+      className={`audrey-sprite audrey-outline ${className ?? ""}`}
+      viewBox="0 0 360 420"
+      shapeRendering="crispEdges"
+      style={style}
+      onAnimationEnd={onAnimationEnd}
+      aria-hidden="true"
+    >
+      {pixels.map(([x, y, w, h, color], index) => (
+        <rect key={index} x={x} y={y} width={w} height={h} fill={color} />
+      ))}
+    </svg>
+  );
+}
+
+/**
+ * Audrey II: a campy 16-bit Little Shop of Horrors plant that chomps down on
+ * the file-select button. The button *is* the real file input, nested in her
+ * mouth, so uploading reads as feeding the plant. The upper jaw is a separate
+ * sprite layer stacked above the button (with pointer-events off) so a chomp
+ * visually bites the button without blocking clicks.
+ */
+export default function AudreyPlant({
+  phase,
+  onSelectFile,
+  disabled,
+}: AudreyPlantProps) {
+  // Bumping this key remounts the jaw so a fresh chomp replays each time.
   const [chompId, setChompId] = useState(0);
   const [chomping, setChomping] = useState(false);
 
@@ -37,9 +151,8 @@ export default function AudreyPlant({ phase }: AudreyPlantProps) {
     setChomping(true);
   }
 
-  // Chomp on the transitions that mean "you just fed me". Deferred to the next
-  // frame so the animation restarts cleanly after paint (and so the state
-  // update does not run synchronously inside the effect).
+  // Chomp on the transitions that mean "you just fed me". Deferred a frame so
+  // the animation restarts cleanly and setState never runs inside the effect.
   useEffect(() => {
     if (phase !== "ready" && phase !== "fed") {
       return;
@@ -50,129 +163,52 @@ export default function AudreyPlant({ phase }: AudreyPlantProps) {
     return () => cancelAnimationFrame(frame);
   }, [phase]);
 
-  const jawClass = `audrey-jaw ${chomping ? "audrey-jaw--chomp" : "audrey-jaw--idle"}`;
+  const jawClass = `audrey-jaw ${chomping ? "audrey-jaw--chomp" : "audrey-jaw--chew"}`;
 
   return (
-    <div className="mt-6 flex items-end justify-center gap-3">
+    <div className="mt-4 flex flex-col items-center">
       {/* Speech bubble */}
       <div
-        className="audrey-bubble relative mb-8 max-w-[11rem] rounded-2xl border border-emerald-200 bg-white px-4 py-2 text-sm font-semibold text-emerald-800 shadow-sm"
+        className="mb-3 inline-block rounded-sm border-4 border-[#20123a] bg-[#fdf6e4] px-3 py-2 text-sm font-extrabold uppercase tracking-wide text-[#20123a] shadow-[5px_5px_0_#20123a]"
         aria-live="polite"
       >
         {BUBBLE_TEXT[phase]}
-        {/* little tail pointing at the plant */}
-        <span
-          aria-hidden="true"
-          className="absolute -bottom-1.5 right-5 h-3 w-3 rotate-45 border-b border-r border-emerald-200 bg-white"
-        />
       </div>
 
-      {/* The plant */}
-      <button
-        type="button"
-        onClick={chomp}
-        aria-label="Feed Audrey II"
-        title="Feed me!"
-        className="shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
-      >
-        <svg
-          width="132"
-          height="150"
-          viewBox="0 0 220 250"
-          role="img"
-          aria-label="A hungry cartoon plant"
+      {/* Fixed-size stage: the two sprite layers and the button share it 1:1. */}
+      <div className="relative h-[420px] w-[360px] max-w-full">
+        <Sprite pixels={BODY} className="absolute inset-0" />
+
+        {/* The real file picker, nestled in Audrey's mouth. */}
+        <label
+          className={`absolute left-1/2 top-[212px] z-[5] -translate-x-1/2 cursor-pointer rounded-sm border-4 border-[#20123a] bg-slate-800 px-5 py-3 text-base font-extrabold uppercase tracking-wide text-white shadow-[5px_5px_0_#20123a] transition hover:bg-slate-700 ${
+            disabled ? "cursor-not-allowed opacity-60" : ""
+          }`}
+          onClick={() => {
+            if (!disabled) {
+              chomp();
+            }
+          }}
         >
-          {/* ---- Pot (stays put) ---- */}
-          <path
-            d="M64 214 L156 214 L146 246 L74 246 Z"
-            fill="#b45309"
+          Select XLSX
+          <input
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            onChange={onSelectFile}
+            disabled={disabled}
+            className="hidden"
           />
-          <path
-            d="M58 206 L162 206 L156 220 L64 220 Z"
-            fill="#c2620c"
-          />
-          <ellipse cx="110" cy="208" rx="49" ry="6" fill="#7c3f0a" />
+        </label>
 
-          {/* ---- Everything above the soil sways together ---- */}
-          <g className="audrey-sway">
-            {/* Stem */}
-            <path
-              d="M110 208 C100 176 122 160 110 128"
-              fill="none"
-              stroke="#15803d"
-              strokeWidth="13"
-              strokeLinecap="round"
-            />
-
-            {/* Leaves */}
-            <path
-              d="M108 182 C78 176 66 156 70 140 C92 142 110 160 108 182 Z"
-              fill="#16a34a"
-            />
-            <path
-              d="M112 190 C142 186 156 168 154 150 C130 150 110 168 112 190 Z"
-              fill="#22c55e"
-            />
-            <path
-              d="M70 140 C86 146 100 162 108 180"
-              fill="none"
-              stroke="#15803d"
-              strokeWidth="2"
-            />
-            <path
-              d="M154 150 C138 156 124 170 113 188"
-              fill="none"
-              stroke="#15803d"
-              strokeWidth="2"
-            />
-
-            {/* ---- Head / pod ---- */}
-            {/* dark throat behind the jaws */}
-            <ellipse cx="110" cy="96" rx="40" ry="34" fill="#4c0519" />
-            {/* little uvula */}
-            <ellipse cx="110" cy="112" rx="7" ry="10" fill="#9f1239" />
-
-            {/* Lower jaw (static green cup with a red lip + teeth) */}
-            <g>
-              <path
-                d="M70 92 C70 128 92 138 110 138 C128 138 150 128 150 92 C132 104 88 104 70 92 Z"
-                fill="#15803d"
-              />
-              <path
-                d="M70 92 C88 104 132 104 150 92 C150 100 150 100 149 104 C130 114 90 114 71 104 C70 100 70 96 70 92 Z"
-                fill="#e11d48"
-              />
-              {/* bottom teeth (point up) */}
-              <path
-                d="M80 101 L86 90 L92 102 Z M96 103 L103 91 L110 103 Z M110 103 L117 91 L124 103 Z M128 102 L134 90 L140 101 Z"
-                fill="#ffffff"
-              />
-            </g>
-
-            {/* Upper jaw (opens on chomp; hinge at back-right) */}
-            <g key={chompId} className={jawClass} onAnimationEnd={() => setChomping(false)}>
-              <path
-                d="M70 92 C70 54 90 40 110 40 C130 40 150 54 150 92 C132 80 88 80 70 92 Z"
-                fill="#16a34a"
-              />
-              {/* red upper lip */}
-              <path
-                d="M70 92 C88 80 132 80 150 92 C150 86 150 84 149 81 C130 71 90 71 71 81 C70 84 70 88 70 92 Z"
-                fill="#f43f5e"
-              />
-              {/* pod spots */}
-              <circle cx="96" cy="60" r="4" fill="#f97316" />
-              <circle cx="118" cy="55" r="3.5" fill="#f97316" />
-              <circle cx="108" cy="70" r="3" fill="#f97316" />
-              {/* top teeth (point down) */}
-              <path
-                d="M80 83 L86 94 L92 82 Z M96 81 L103 93 L110 81 Z M110 81 L117 93 L124 81 Z M128 82 L134 94 L140 83 Z"
-                fill="#ffffff"
-              />
-            </g>
-          </g>
-        </svg>
-      </button>
+        {/* Upper jaw on top; pointer-events off so clicks reach the button. */}
+        <Sprite
+          key={chompId}
+          pixels={UPPER}
+          className={`absolute inset-0 z-[6] ${jawClass}`}
+          style={{ pointerEvents: "none" }}
+          onAnimationEnd={() => setChomping(false)}
+        />
+      </div>
     </div>
   );
 }

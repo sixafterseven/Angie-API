@@ -203,19 +203,12 @@ export default function UploadPage() {
               preserves the source file and creates a separate cleaned version.
             </p>
 
-            <label className="mt-6 inline-flex cursor-pointer items-center justify-center rounded-xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800">
-              Select XLSX file
-              <input
-                type="file"
-                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                onChange={handleFileSelection}
-                disabled={isBusy}
-                className="hidden"
-              />
-            </label>
-
-            {/* Audrey II is hungry for leads. Decorative only. */}
-            <AudreyPlant phase={audreyPhase(uploadState, Boolean(file))} />
+            {/* Audrey II owns the file picker — she chomps the button to eat your leads. */}
+            <AudreyPlant
+              phase={audreyPhase(uploadState, Boolean(file))}
+              onSelectFile={handleFileSelection}
+              disabled={isBusy}
+            />
           </div>
 
           {file ? (
