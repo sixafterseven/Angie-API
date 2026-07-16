@@ -11,6 +11,7 @@ import {
   isApprovedEmployee,
   UNAUTHORIZED_MESSAGE,
 } from "@/lib/authorized-emails";
+import { classifyAuthError } from "@/lib/auth-errors";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -74,12 +75,12 @@ export default function LoginPage() {
 
       router.replace("/dashboard");
     } catch (caughtError) {
-      const message =
-        caughtError instanceof Error
-          ? caughtError.message
-          : "Google sign-in failed.";
+      // Log the full technical error for debugging, but never show it: a
+      // blocking-function rejection arrives here as an auth/internal-error
+      // carrying the Cloud Function URL and raw 403 body.
+      console.error("Google sign-in error:", caughtError);
 
-      setError(message);
+      setError(classifyAuthError(caughtError));
     } finally {
       setSigningIn(false);
     }
