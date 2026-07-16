@@ -12,7 +12,7 @@
  * debugging; classifyAuthError intentionally returns only display text.
  */
 
-import { UNAUTHORIZED_MESSAGE } from "@/lib/authorized-emails";
+import { UNAUTHORIZED_MESSAGE } from "@/lib/user-access";
 
 const GENERIC_MESSAGE = "Sign-in could not be completed. Please try again.";
 
