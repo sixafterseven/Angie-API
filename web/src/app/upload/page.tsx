@@ -7,9 +7,25 @@ import { ref, uploadBytesResumable } from "firebase/storage";
 import { CheckCircle2, FileSpreadsheet, UploadCloud, X } from "lucide-react";
 
 import AppShell from "@/components/app-shell";
+import AudreyPlant, { AudreyPhase } from "@/components/audrey-plant";
 import { auth, db, storage } from "@/lib/firebase";
 
 type UploadState = "idle" | "checking" | "uploading" | "complete" | "error";
+
+/**
+ * Maps the upload state to what Audrey II should be doing.
+ */
+function audreyPhase(uploadState: UploadState, hasFile: boolean): AudreyPhase {
+  if (uploadState === "complete") {
+    return "fed";
+  }
+
+  if (uploadState === "checking" || uploadState === "uploading") {
+    return "eating";
+  }
+
+  return hasFile ? "ready" : "idle";
+}
 
 /**
  * Formats a date as YYYYMMDD.
@@ -197,6 +213,9 @@ export default function UploadPage() {
                 className="hidden"
               />
             </label>
+
+            {/* Audrey II is hungry for leads. Decorative only. */}
+            <AudreyPlant phase={audreyPhase(uploadState, Boolean(file))} />
           </div>
 
           {file ? (
