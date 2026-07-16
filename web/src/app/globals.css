@@ -26,69 +26,60 @@ body {
 }
 
 /*
- * Audrey II — the campy 16-bit Little Shop of Horrors mascot on the upload
- * page. She chomps down on the file-select button. Namespaced so nothing here
- * leaks into the rest of the app. Stepped timing gives the motion a retro,
- * sprite-animation feel.
+ * Audrey II — the Little Shop of Horrors mascot on the upload page. Her upper
+ * jaw chomps down on the file-select button nestled in her mouth. Namespaced
+ * so nothing here leaks into the rest of the app. The jaw rests slightly open
+ * (translateY -12) so the mouth is inviting even when still.
  */
 
-/* Idle: a slow gnaw on the button that never fully closes. */
+/* Idle: a slow gnaw that keeps the mouth open. */
 @keyframes audrey-chew {
   0%,
   100% {
-    transform: translateY(0);
+    transform: translateY(-12px);
   }
   50% {
-    transform: translateY(8px);
+    transform: translateY(-2px);
   }
 }
 
-/* A hungry chomp burst that bites down onto the button, then settles. */
+/* A hungry chomp: bite down onto the button, then settle back open. */
 @keyframes audrey-chomp {
   0% {
-    transform: translateY(0);
+    transform: translateY(-12px);
   }
   20% {
-    transform: translateY(34px);
+    transform: translateY(30px);
   }
   40% {
-    transform: translateY(6px);
+    transform: translateY(-4px);
   }
   60% {
-    transform: translateY(26px);
+    transform: translateY(24px);
   }
   80% {
-    transform: translateY(12px);
+    transform: translateY(6px);
   }
   100% {
-    transform: translateY(4px);
+    transform: translateY(-6px);
   }
-}
-
-.audrey-sprite {
-  image-rendering: pixelated;
-}
-
-/* A hard 4-direction keyline so the sprite reads like pixel art. */
-.audrey-outline {
-  filter: drop-shadow(3px 0 0 #20123a) drop-shadow(-3px 0 0 #20123a)
-    drop-shadow(0 3px 0 #20123a) drop-shadow(0 -3px 0 #20123a);
 }
 
 /* translateY on the jaw is in SVG user units; the sprite renders 1:1. */
 .audrey-jaw {
   transform-box: view-box;
+  transform: translateY(-12px);
 }
 
 .audrey-jaw--chew {
-  animation: audrey-chew 1.4s steps(2, end) infinite;
+  animation: audrey-chew 2.6s ease-in-out infinite;
 }
 
 .audrey-jaw--chomp {
-  animation: audrey-chomp 0.7s steps(4, end);
+  animation: audrey-chomp 0.75s ease-in-out;
 }
 
-/* Respect users who ask for less motion: hold the jaw still. */
+/* Respect users who ask for less motion: hold the jaw at its resting pose. */
 @media (prefers-reduced-motion: reduce) {
   .audrey-jaw--chew,
   .audrey-jaw--chomp {
