@@ -26,62 +26,122 @@ body {
 }
 
 /*
- * Audrey II — the Little Shop of Horrors mascot on the upload page. Her upper
- * jaw chomps down on the file-select button nestled in her mouth. Namespaced
- * so nothing here leaks into the rest of the app. The jaw rests slightly open
- * (translateY -12) so the mouth is inviting even when still.
+ * Audrey II — a retro arcade pixel scene on the upload page. Self-contained
+ * dark panel; everything here is namespaced so nothing leaks into the rest of
+ * the app. The plant's upper jaw chomps the UPLOAD button when a file is fed.
  */
-
-/* Idle: a slow gnaw that keeps the mouth open. */
-@keyframes audrey-chew {
-  0%,
-  100% {
-    transform: translateY(-12px);
-  }
-  50% {
-    transform: translateY(-2px);
-  }
+.arcade-panel {
+  position: relative;
+  container-type: inline-size;
+  aspect-ratio: 3 / 2;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #241038;
+  border: 5px solid #7c3aed;
+  box-shadow: 0 0 0 3px #3b1566, inset 0 0 60px rgba(0, 0, 0, 0.5);
+  image-rendering: pixelated;
 }
 
-/* A hungry chomp: bite down onto the button, then settle back open. */
+.arcade-bricks {
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  background-image: linear-gradient(#3a1c5a 2px, transparent 2px),
+    linear-gradient(90deg, #3a1c5a 2px, transparent 2px);
+  background-size: 7.4% 6%;
+}
+
+.arcade-sprite {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.arcade-title,
+.arcade-foot {
+  font-family: ui-monospace, Menlo, monospace;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #8dff5b;
+}
+
+.arcade-title {
+  font-size: 4.8cqw;
+  text-shadow: 0 3px 0 #1c7a1c, 0 0 12px rgba(124, 252, 0, 0.5);
+}
+
+.arcade-foot {
+  font-size: 2.4cqw;
+}
+
+.arcade-underline {
+  height: 4px;
+  background: #7c3aed;
+  box-shadow: 0 0 8px #a855f7;
+}
+
+.arcade-foot .heart {
+  color: #c084fc;
+}
+
+.arcade-btn {
+  font-family: ui-monospace, Menlo, monospace;
+  font-weight: 800;
+  font-size: 2.6cqw;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #fff;
+  background: #7c3aed;
+  border: 4px solid #3b1566;
+  border-bottom-width: 7px;
+  border-radius: 6px;
+  box-shadow: 0 0 0 3px #12081f;
+  padding: 1.4cqw 2.6cqw;
+}
+
+.arcade-btn:hover:not(:disabled) {
+  background: #8b4df2;
+}
+
+.arcade-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* A hungry chomp: the upper jaw bites down onto the button, then settles. */
 @keyframes audrey-chomp {
   0% {
-    transform: translateY(-12px);
+    transform: translateY(0);
   }
   20% {
-    transform: translateY(30px);
+    transform: translateY(26px);
   }
   40% {
-    transform: translateY(-4px);
+    transform: translateY(4px);
   }
   60% {
-    transform: translateY(24px);
+    transform: translateY(20px);
   }
   80% {
-    transform: translateY(6px);
+    transform: translateY(8px);
   }
   100% {
-    transform: translateY(-6px);
+    transform: translateY(0);
   }
 }
 
 /* translateY on the jaw is in SVG user units; the sprite renders 1:1. */
 .audrey-jaw {
   transform-box: view-box;
-  transform: translateY(-12px);
-}
-
-.audrey-jaw--chew {
-  animation: audrey-chew 2.6s ease-in-out infinite;
 }
 
 .audrey-jaw--chomp {
-  animation: audrey-chomp 0.75s ease-in-out;
+  animation: audrey-chomp 0.7s ease-in-out;
 }
 
-/* Respect users who ask for less motion: hold the jaw at its resting pose. */
 @media (prefers-reduced-motion: reduce) {
-  .audrey-jaw--chew,
   .audrey-jaw--chomp {
     animation: none;
   }
