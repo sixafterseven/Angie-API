@@ -4,7 +4,7 @@ import { ChangeEvent, useState } from "react";
 import Link from "next/link";
 import { doc, getDoc } from "firebase/firestore";
 import { ref, uploadBytesResumable } from "firebase/storage";
-import { CheckCircle2, FileSpreadsheet, UploadCloud, X } from "lucide-react";
+import { CheckCircle2, FileSpreadsheet, X } from "lucide-react";
 
 import AppShell from "@/components/app-shell";
 import AudreyPlant, { AudreyPhase } from "@/components/audrey-plant";
@@ -189,27 +189,17 @@ export default function UploadPage() {
     >
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-10 text-center">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-950 text-white">
-              <UploadCloud size={26} />
-            </div>
+          {/* Audrey II arcade panel owns the file picker — chomp UPLOAD to feed her. */}
+          <AudreyPlant
+            phase={audreyPhase(uploadState, Boolean(file))}
+            onSelectFile={handleFileSelection}
+            disabled={isBusy}
+          />
 
-            <h3 className="mt-5 text-xl font-semibold">
-              Choose a lead workbook
-            </h3>
-
-            <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-500">
-              Upload the original Outscraper or lead-export workbook. Angie OS
-              preserves the source file and creates a separate cleaned version.
-            </p>
-
-            {/* Audrey II owns the file picker — she chomps the button to eat your leads. */}
-            <AudreyPlant
-              phase={audreyPhase(uploadState, Boolean(file))}
-              onSelectFile={handleFileSelection}
-              disabled={isBusy}
-            />
-          </div>
+          <p className="mx-auto mt-4 max-w-lg text-center text-sm leading-6 text-slate-500">
+            Upload the original Outscraper or lead-export workbook. Angie OS
+            preserves the source file and creates a separate cleaned version.
+          </p>
 
           {file ? (
             <div className="mt-5 flex items-center gap-4 rounded-xl border border-slate-200 p-4">
