@@ -6,7 +6,17 @@
  * batch rescore script to apply a configuration change.
  */
 
-export const SCORING_VERSION = 'ma-lead-score-v1';
+export const SCORING_VERSION = 'ma-lead-score-v2';
+
+/** Tunable target-geography configuration (Atlanta metro / Georgia). */
+export interface GeographyConfig {
+  /** Two-letter codes that are in-market. Anything else is out of market. */
+  eligibleStates: string[];
+  atlantaMetro: {
+    cities: string[];
+    postalPrefixes: string[];
+  };
+}
 
 export interface IndustryWeight {
   /** Substrings matched (case-insensitive) against the lead's category. */
@@ -27,12 +37,7 @@ export interface ScoringConfig {
   };
   industries: IndustryWeight[];
   bands: { min: number; band: string }[];
-  /** Empty = geography rule inactive (records geo, applies no penalty). */
-  targetGeography: {
-    states: string[];
-    cities: string[];
-    postalPrefixes: string[];
-  };
+  geography: GeographyConfig;
   /** Known national chains — a name match routes to Needs Review, never auto-suppress. */
   chains: string[];
   /** Known franchise brands — a name match routes to Needs Review (ownership not decided). */
@@ -75,7 +80,23 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
     {min: 0, band: 'Poor Fit'},
   ],
 
-  targetGeography: {states: [], cities: [], postalPrefixes: []},
+  geography: {
+    eligibleStates: ['ga'],
+    atlantaMetro: {
+      cities: [
+        'atlanta', 'marietta', 'alpharetta', 'roswell', 'sandy springs',
+        'smyrna', 'decatur', 'dunwoody', 'kennesaw', 'duluth', 'lawrenceville',
+        'johns creek', 'brookhaven', 'peachtree corners', 'norcross', 'tucker',
+        'stone mountain', 'east point', 'college park', 'mableton', 'austell',
+        'powder springs', 'woodstock', 'acworth', 'suwanee', 'snellville',
+        'buford', 'cumming', 'canton', 'fayetteville', 'stockbridge',
+        'mcdonough', 'conyers', 'douglasville', 'union city', 'forest park',
+        'riverdale', 'morrow', 'jonesboro', 'doraville', 'chamblee', 'vinings',
+        'lilburn', 'grayson', 'loganville', 'hiram', 'dallas',
+      ],
+      postalPrefixes: ['300', '301', '302', '303'],
+    },
+  },
 
   chains: [
     'aspen dental',

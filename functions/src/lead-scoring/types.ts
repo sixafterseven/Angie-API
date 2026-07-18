@@ -63,6 +63,10 @@ export interface ScoreResult {
   qualificationReasons: QualificationReason[];
   qualificationWarnings: string[];
   recommendedNextAction: string;
+  geographyStatus: 'in_market' | 'out_of_market' | 'needs_review';
+  geographyReason: string;
+  marketTier: 'tier_1_atlanta_metro' | 'tier_2_georgia' | null;
+  isInTargetMarket: boolean;
   scoringVersion: string;
   /**
    * Exactly which field values were used, and which signals were unavailable.
