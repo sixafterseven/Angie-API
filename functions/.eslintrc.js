@@ -21,4 +21,13 @@ module.exports = {
     "valid-jsdoc": "off",
     "max-len": "off",
   },
+  overrides: [
+    {
+      // node:test suites are plain CommonJS run against compiled lib/ output.
+      files: ["test/**/*.js"],
+      rules: {
+        "@typescript-eslint/no-require-imports": "off",
+      },
+    },
+  ],
 };
