@@ -181,14 +181,33 @@ export default function AudreyPlant({
         <path d={tendrilPath(316, 372, -1)} fill="none" stroke={C.ten} strokeWidth="10" strokeLinecap="round" />
         <path d={tendrilPath(444, 372, 1)} fill="none" stroke={C.ten} strokeWidth="10" strokeLinecap="round" />
         <Rects pixels={BODY} />
+        {/* Generic "Shagswell" coffee-tin label (a playful, original name). */}
+        <g>
+          <ellipse cx="330" cy="446" rx="15" ry="7" fill="#ffffff" />
+          <path d="M317 446 a13 12 0 0 0 26 0 Z" fill="#ffffff" />
+          <path d="M330 432 q5 6 0 12" stroke={C.red} strokeWidth="2" fill="none" />
+        </g>
         <text
-          x="380"
-          y="462"
+          x="398"
+          y="452"
           fontFamily="Georgia, serif"
           fontWeight="800"
-          fontSize="24"
+          fontSize="19"
           fill={C.red}
           textAnchor="middle"
+          style={{ letterSpacing: "0.5px" }}
+        >
+          SHAGSWELL
+        </text>
+        <text
+          x="398"
+          y="470"
+          fontFamily="Georgia, serif"
+          fontWeight="700"
+          fontSize="12"
+          fill={C.red}
+          textAnchor="middle"
+          style={{ letterSpacing: "1px" }}
         >
           COFFEE
         </text>
