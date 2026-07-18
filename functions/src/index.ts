@@ -3,12 +3,19 @@ import {FieldValue, getFirestore} from 'firebase-admin/firestore';
 import {getStorage} from 'firebase-admin/storage';
 import {logger} from 'firebase-functions';
 import {setGlobalOptions} from 'firebase-functions/v2';
-import {onDocumentCreated} from 'firebase-functions/v2/firestore';
+import {
+  onDocumentCreated,
+  onDocumentWritten,
+} from 'firebase-functions/v2/firestore';
 import {onObjectFinalized} from 'firebase-functions/v2/storage';
 import ExcelJS from 'exceljs';
 import {tmpdir} from 'os';
 import {join} from 'path';
 import {unlink} from 'fs/promises';
+
+import {SCORING_VERSION} from './lead-scoring/config';
+import {scoreLead, toLeadScoreFields} from './lead-scoring/score';
+import {LeadInput} from './lead-scoring/types';
 
 initializeApp();
 
@@ -18,6 +25,54 @@ setGlobalOptions({
 });
 
 const db = getFirestore();
+
+/*
+ * Lead Qualification Engine — auto-score a lead whenever it is written.
+ *
+ * Idempotent: it acts only when the lead is not already scored at the current
+ * SCORING_VERSION. Writing the derived fields re-fires this trigger, which then
+ * sees the current version and no-ops, so there is no loop. Per-lead only — the
+ * batch rescore script adds cross-record duplicate/conflict detection.
+ *
+ * Only additive `*Score` / `qualification*` fields are written (merge); the raw
+ * Outscraper/Vera fields are never overwritten.
+ */
+export const scoreLeadOnWrite = onDocumentWritten(
+    {
+      document: 'leads/{leadId}',
+      region: 'us-east1',
+      retry: false,
+    },
+    async (event) => {
+      const after = event.data?.after;
+
+      if (!after || !after.exists) {
+        return;
+      }
+
+      const data = after.data() ?? {};
+
+      if (data.scoringVersion === SCORING_VERSION) {
+        return;
+      }
+
+      const result = scoreLead(data as LeadInput);
+
+      await after.ref.set(
+          {
+            ...toLeadScoreFields(result),
+            scoredAt: FieldValue.serverTimestamp(),
+          },
+          {merge: true},
+      );
+
+      logger.info('Lead scored.', {
+        leadId: event.params.leadId,
+        band: result.qualificationBand,
+        score: result.overallQualificationScore,
+      });
+    },
+);
 
 const ALLOWED_EXTENSIONS = new Set(['csv', 'xlsx', 'xls', 'pdf']);
 

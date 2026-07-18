@@ -30,6 +30,10 @@ type GroundedLead = {
   category: string;
   rating: number | null;
   reviewCount: number | null;
+  qualificationBand: string;
+  overallQualificationScore: number | null;
+  recommendedNextAction: string;
+  qualificationReasons: string[];
 };
 
 let client: OpenAI | null = null;
@@ -101,10 +105,33 @@ async function loadSalesReadyLeads(leadIds: string[]): Promise<GroundedLead[]> {
       category: readString(data.category) || readString(data.industry),
       rating: readNumber(data.rating),
       reviewCount: readNumber(data.reviewCount),
+      qualificationBand: readString(data.qualificationBand),
+      overallQualificationScore: readNumber(data.overallQualificationScore),
+      recommendedNextAction: readString(data.recommendedNextAction),
+      qualificationReasons: readReasonTexts(data.qualificationReasons),
     });
   }
 
   return leads;
+}
+
+/**
+ * Pulls the human-readable reason strings out of a lead's qualificationReasons
+ * array (each entry is {code, text, points}). Bounded so the facts stay compact.
+ */
+function readReasonTexts(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) =>
+      entry && typeof entry === "object" && "text" in entry
+        ? readString((entry as { text: unknown }).text)
+        : "",
+    )
+    .filter(Boolean)
+    .slice(0, 3);
 }
 
 /**
@@ -144,6 +171,22 @@ function buildLeadFacts(leads: GroundedLead[]): string {
 
       if (lead.reviewCount !== null) {
         parts.push(`reviews: ${lead.reviewCount}`);
+      }
+
+      if (lead.qualificationBand) {
+        const score =
+          lead.overallQualificationScore !== null
+            ? ` ${lead.overallQualificationScore}/100`
+            : "";
+        parts.push(`qualification: ${lead.qualificationBand}${score}`);
+      }
+
+      if (lead.recommendedNextAction) {
+        parts.push(`recommended action: ${lead.recommendedNextAction}`);
+      }
+
+      if (lead.qualificationReasons.length) {
+        parts.push(`why: ${lead.qualificationReasons.join("; ")}`);
       }
 
       return `- ${parts.join(" | ")}`;
