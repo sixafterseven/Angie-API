@@ -200,6 +200,19 @@ const GROUNDING_RULES = [
   "If a fact is missing, say it is missing rather than guessing.",
 ].join("\n");
 
+/** Shared Micah Amari voice, reused by strategy + outreach generation. */
+const VOICE_RULES = [
+  "Voice: relaxed, smart, warm, lightly witty, confident but never corporate.",
+  "Ban this language entirely: elevate your brand, amplify your presence, unlock",
+  "your potential, strategic solutions, take it to the next level, dominate your",
+  "market, bring your vision to life, and any generic agency/consulting phrasing.",
+  "No fake compliments. Do not claim Angie inspected a website or anything else",
+  "she has not — website quality has NOT been researched, so never diagnose a",
+  "website problem. When only lead-database facts are available, use careful",
+  'language: "worth reviewing", "may be an opportunity", "could be stronger",',
+  '"would benefit from a closer look". Keep any humor light and occasional.',
+].join("\n");
+
 async function generateText(prompt: string): Promise<string> {
   const response = await getOpenAI().responses.create({
     model: MODEL,
@@ -470,43 +483,57 @@ ${facts}
   }
 
   if (action === "strategy") {
-    const strategy = await generateText(`
+    const rawText = await generateText(`
 You are Angie, a sales assistant for Micah Amari.
 
 ${GROUNDING_RULES}
+${VOICE_RULES}
 
-Write a simple, practical sales strategy for this set of leads, at most 250
-words. Cover: the shared opportunity, the strongest angle, the order to work
-them in, and the single most likely objection.
-Plain text. Short paragraphs or dashes. No markdown headings.
+Write a practical sales playbook for this set of leads as ONE JSON object of
+this exact shape (no markdown fences):
+
+{
+  "opportunitySnapshot": "2-3 sentences: what stands out about these leads",
+  "fixFirst": ["3-5 short, concrete priorities"],
+  "whyItMatters": "2-3 sentences in plain English tied to these businesses",
+  "recommendedOffer": "the most relevant Micah Amari service/package, 1-2 sentences",
+  "conversationStarter": "one natural opening line a salesperson could use",
+  "watchOuts": ["1-3 things uncertain, missing, or worth verifying"],
+  "nextStep": "one concrete next action"
+}
+
+Ground every claim in the facts. Keep it specific, not generic.
 
 Lead facts:
 ${facts}
 `);
 
-    return NextResponse.json({
-      action,
-      strategy: sanitizeGenerated(strategy, 4000),
-    });
+    return NextResponse.json({ action, strategy: parseStrategy(rawText) });
   }
 
   // Draft one email per selected lead, keyed by leadId so each draft can be
-  // tied back to a real Firestore record.
+  // tied back to a real Firestore record. An optional modifier adjusts tone or
+  // focus without inventing new observations.
   const rawText = await generateText(`
 You are Angie, a sales assistant for Micah Amari.
 
 ${GROUNDING_RULES}
+${VOICE_RULES}
+${modifierInstruction(readString(body.modifier))}
 
-Draft one short outreach email for EACH lead below.
-
-Address the recipient by their greeting name when one is given, otherwise use
-the business name. Keep each email under 120 words, friendly and direct, with
-a clear soft call to action.
+Draft one short outreach email for EACH lead below. Address the recipient by
+their greeting name when given, otherwise the business name. Keep each body
+under 120 words: warm, concise, observant, low-pressure, human — not pushy, no
+long intro, no jargon. When website quality is unknown, frame it as an
+invitation to review opportunities, not a diagnosis.
 
 Return ONLY a JSON object of this exact shape, no markdown fences:
 
-{"emails":[{"leadId":"...","subject":"...","body":"..."}]}
+{"emails":[{"leadId":"...","subject":"...","previewText":"...","body":"...","cta":"...","toneLabel":"..."}]}
 
+- previewText: a short inbox preview line (under 90 chars)
+- cta: the low-pressure next step
+- toneLabel: 1-3 words describing the tone (e.g. "Warm & direct")
 Use the leadId values exactly as given. Include every lead exactly once.
 
 Lead facts:
@@ -525,11 +552,78 @@ ${facts}
   return NextResponse.json({ action, emails });
 }
 
+/** Turns a tone/focus modifier code into a one-line instruction. */
+function modifierInstruction(modifier: string): string {
+  switch (modifier) {
+    case "warmer":
+      return "Adjustment: make it noticeably warmer and friendlier.";
+    case "shorter":
+      return "Adjustment: make it shorter — trim to the essentials.";
+    case "direct":
+      return "Adjustment: make it more direct and to the point.";
+    case "focus_website":
+      return "Adjustment: center it on the website/online experience — as an invitation to review, never a diagnosis.";
+    case "focus_branding":
+      return "Adjustment: center it on branding and presentation.";
+    case "focus_reviews":
+      return "Adjustment: center it on their reviews and reputation.";
+    default:
+      return "";
+  }
+}
+
+type StrategyOutput = {
+  opportunitySnapshot: string;
+  fixFirst: string[];
+  whyItMatters: string;
+  recommendedOffer: string;
+  conversationStarter: string;
+  watchOuts: string[];
+  nextStep: string;
+};
+
+/** Validates the model's strategy JSON into safe, bounded fields. */
+function parseStrategy(rawText: string): StrategyOutput {
+  const withoutFences = rawText.replace(/\`\`\`(?:json)?/gi, "").trim();
+  const start = withoutFences.indexOf("{");
+  const end = withoutFences.lastIndexOf("}");
+
+  let parsed: Record<string, unknown> = {};
+  if (start >= 0 && end > start) {
+    try {
+      parsed = JSON.parse(withoutFences.slice(start, end + 1));
+    } catch {
+      parsed = {};
+    }
+  }
+
+  const list = (value: unknown, max: number): string[] =>
+    Array.isArray(value)
+      ? value
+          .map((v) => sanitizeGenerated(v, 240))
+          .filter(Boolean)
+          .slice(0, max)
+      : [];
+
+  return {
+    opportunitySnapshot: sanitizeGenerated(parsed.opportunitySnapshot, 600),
+    fixFirst: list(parsed.fixFirst, 5),
+    whyItMatters: sanitizeGenerated(parsed.whyItMatters, 600),
+    recommendedOffer: sanitizeGenerated(parsed.recommendedOffer, 400),
+    conversationStarter: sanitizeGenerated(parsed.conversationStarter, 400),
+    watchOuts: list(parsed.watchOuts, 3),
+    nextStep: sanitizeGenerated(parsed.nextStep, 300),
+  };
+}
+
 type DraftedEmail = {
   leadId: string;
   businessName: string;
   subject: string;
+  previewText: string;
   body: string;
+  cta: string;
+  toneLabel: string;
 };
 
 /**
@@ -600,7 +694,10 @@ function parseEmails(rawText: string, leads: GroundedLead[]): DraftedEmail[] {
       leadId,
       businessName: lead.businessName,
       subject,
+      previewText: sanitizeGenerated(candidate.previewText, 160),
       body,
+      cta: sanitizeGenerated(candidate.cta, 200),
+      toneLabel: sanitizeGenerated(candidate.toneLabel, 40) || "Warm & direct",
     });
   }
 

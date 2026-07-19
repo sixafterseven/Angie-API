@@ -9,6 +9,7 @@ import {
   Database,
   FileUp,
   LayoutDashboard,
+  ListMusic,
   LogOut,
   Menu,
   Users,
@@ -17,6 +18,7 @@ import {
 
 import { auth } from "@/lib/firebase";
 import { ACCESS_DENIED_KEY, isApprovedEmployee } from "@/lib/authorized-emails";
+import { ToastProvider } from "@/components/toast";
 
 type AppShellProps = {
   children: ReactNode;
@@ -49,6 +51,11 @@ const navigation = [
     name: "Ask Angie",
     href: "/ask-angie",
     icon: Bot,
+  },
+  {
+    name: "Saved Lists",
+    href: "/saved-lists",
+    icon: ListMusic,
   },
 ];
 
@@ -173,6 +180,7 @@ export default function AppShell({
   }
 
   return (
+    <ToastProvider>
     <div className="min-h-screen bg-canvas text-ink">
       {/* Mobile top bar — the only nav entry point below lg. */}
       <div className="sticky top-0 z-30 flex items-center justify-between border-b border-shell-line bg-shell px-4 py-3 text-white lg:hidden">
@@ -283,7 +291,7 @@ export default function AppShell({
             <h2 className="text-2xl font-bold tracking-tight">{title}</h2>
 
             {description ? (
-              <p className="mt-1 text-sm text-slate-500">{description}</p>
+              <p className="mt-1 text-sm text-muted">{description}</p>
             ) : null}
           </div>
         </header>
@@ -291,5 +299,6 @@ export default function AppShell({
         <main className="mx-auto max-w-7xl p-6 lg:p-10">{children}</main>
       </div>
     </div>
+    </ToastProvider>
   );
 }

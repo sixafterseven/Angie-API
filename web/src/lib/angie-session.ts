@@ -203,3 +203,61 @@ export function clearPersisted(): void {
     // ignore
   }
 }
+
+/* ------------------------------------------- reopen-a-saved-list handoff */
+
+const OPEN_LIST_KEY = "angie-os:open-list";
+
+export type OpenListPayload = {
+  name: string;
+  leadIds: string[];
+  searchSummary: string;
+  filters: AngieFilters;
+  sort?: LeadSort;
+};
+
+/** Stash a saved list for Ask Angie to pick up after navigation. */
+export function saveOpenList(payload: OpenListPayload): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(OPEN_LIST_KEY, JSON.stringify(payload));
+  } catch {
+    // ignore
+  }
+}
+
+/** Read and CLEAR the pending saved list (one-shot handoff). */
+export function takeOpenList(): OpenListPayload | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.sessionStorage.getItem(OPEN_LIST_KEY);
+    if (!raw) {
+      return null;
+    }
+    window.sessionStorage.removeItem(OPEN_LIST_KEY);
+    return JSON.parse(raw) as OpenListPayload;
+  } catch {
+    return null;
+  }
+}
+
+/** Build a session that re-enters a saved list (with its filters/summary). */
+export function sessionFromList(
+  userId: string,
+  payload: OpenListPayload,
+): SessionState {
+  const base = createSession(userId);
+  return {
+    ...base,
+    title: payload.name,
+    activeFilters: payload.filters ?? {},
+    activeSort: payload.sort,
+    activeSearchSummary: payload.searchSummary || payload.name,
+    activeLeadIds: payload.leadIds,
+    lastIntent: "new_search",
+  };
+}

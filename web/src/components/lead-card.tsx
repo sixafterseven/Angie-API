@@ -5,13 +5,16 @@
  */
 "use client";
 
+import { useState } from "react";
 import {
   ArrowUpRight,
   Check,
+  ChevronDown,
   Copy,
-  Mail,
   MapPin,
+  MessageSquare,
   Phone,
+  Sparkles,
   Star,
 } from "lucide-react";
 
@@ -35,19 +38,25 @@ export function LeadCard({
   onToggle,
   onCopyContact,
   copied,
+  onStrategy,
+  onOutreach,
 }: {
   lead: Lead;
   selected: boolean;
   onToggle: () => void;
   onCopyContact: () => void;
   copied: boolean;
+  onStrategy?: (leadId: string) => void;
+  onOutreach?: (leadId: string) => void;
 }) {
+  const [showDetails, setShowDetails] = useState(false);
   const name = getBusinessName(lead);
   const industry = getIndustry(lead);
   const location = getLocationLabel(lead);
   const reasons = getReasonTexts(lead);
   const warnings = getWarningLabels(lead);
   const hasWebsite = Boolean(lead.website);
+  const address = lead.address ?? lead.street ?? "";
 
   return (
     <article
@@ -163,6 +172,32 @@ export function LeadCard({
             </p>
           ) : null}
 
+          {/* Progressive detail disclosure */}
+          {showDetails ? (
+            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-xl bg-subtle px-3 py-2.5 text-sm">
+              {address ? (
+                <>
+                  <dt className="text-faint">Address</dt>
+                  <dd className="text-ink">{address}</dd>
+                </>
+              ) : null}
+              {lead.email ? (
+                <>
+                  <dt className="text-faint">Email</dt>
+                  <dd className="text-ink">{lead.email}</dd>
+                </>
+              ) : null}
+              {lead.marketTier ? (
+                <>
+                  <dt className="text-faint">Market</dt>
+                  <dd className="text-ink">
+                    {lead.marketTier.replace(/_/g, " ")}
+                  </dd>
+                </>
+              ) : null}
+            </dl>
+          ) : null}
+
           {/* Actions */}
           <div className="mt-3 flex flex-wrap gap-2">
             <Button
@@ -174,7 +209,21 @@ export function LeadCard({
               {selected ? "Selected" : "Add to selection"}
             </Button>
 
-            <Button type="button" variant="secondary" size="sm" onClick={onCopyContact}>
+            {onStrategy ? (
+              <Button type="button" variant="secondary" size="sm" onClick={() => onStrategy(lead.id)}>
+                <Sparkles size={14} />
+                Game plan
+              </Button>
+            ) : null}
+
+            {onOutreach ? (
+              <Button type="button" variant="secondary" size="sm" onClick={() => onOutreach(lead.id)}>
+                <MessageSquare size={14} />
+                Draft outreach
+              </Button>
+            ) : null}
+
+            <Button type="button" variant="ghost" size="sm" onClick={onCopyContact}>
               {copied ? <Check size={14} /> : <Copy size={14} />}
               {copied ? "Copied" : "Copy contact"}
             </Button>
@@ -184,21 +233,26 @@ export function LeadCard({
                 href={lead.googleMapsUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-xl border border-line-strong bg-surface px-3.5 py-2 text-xs font-semibold text-ink transition hover:bg-subtle"
+                className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold text-muted transition hover:bg-subtle hover:text-ink"
               >
                 <MapPin size={14} />
                 Map
               </a>
             ) : null}
 
-            {lead.email ? (
-              <a
-                href={`mailto:${lead.email}`}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-line-strong bg-surface px-3.5 py-2 text-xs font-semibold text-ink transition hover:bg-subtle"
+            {(address || lead.email || lead.marketTier) ? (
+              <button
+                type="button"
+                onClick={() => setShowDetails((v) => !v)}
+                aria-expanded={showDetails}
+                className="inline-flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-semibold text-muted transition hover:text-ink"
               >
-                <Mail size={14} />
-                Email
-              </a>
+                <ChevronDown
+                  size={14}
+                  className={showDetails ? "rotate-180 transition" : "transition"}
+                />
+                Details
+              </button>
             ) : null}
           </div>
         </div>

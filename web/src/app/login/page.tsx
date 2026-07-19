@@ -88,22 +88,22 @@ export default function LoginPage() {
   if (loading || user) {
     return (
       <main className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-slate-500">Loading Angie OS...</p>
+        <p className="text-sm text-muted">Loading Angie OS...</p>
       </main>
     );
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
-      <section className="w-full max-w-md rounded-2xl bg-white p-8 shadow-lg">
+    <main className="flex min-h-screen items-center justify-center bg-canvas p-6">
+      <section className="w-full max-w-md rounded-2xl bg-surface p-8 shadow-lg">
         <div className="mb-8">
-          <p className="mb-2 text-sm font-semibold uppercase tracking-widest text-slate-500">
+          <p className="mb-2 text-sm font-semibold uppercase tracking-widest text-muted">
             Micah Amari
           </p>
 
-          <h1 className="text-3xl font-bold text-slate-950">Angie OS</h1>
+          <h1 className="text-3xl font-bold text-ink">Angie OS</h1>
 
-          <p className="mt-3 text-slate-600">
+          <p className="mt-3 text-muted">
             Sign in to upload leads, monitor processing, and work with Angie.
           </p>
         </div>
@@ -112,7 +112,7 @@ export default function LoginPage() {
           type="button"
           onClick={handleGoogleSignIn}
           disabled={signingIn}
-          className="flex w-full items-center justify-center gap-3 rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex w-full items-center justify-center gap-3 rounded-xl bg-accent px-5 py-3 font-semibold text-white transition hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-60"
         >
           <LogIn size={20} />
 

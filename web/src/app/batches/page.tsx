@@ -55,9 +55,9 @@ export default function BatchesPage() {
 
   return (
     <AppShell title="Batches" description="Monitor uploaded lead batches.">
-      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-sm">
         {loading ? (
-          <p className="p-6 text-sm text-slate-500">Loading batches...</p>
+          <p className="p-6 text-sm text-muted">Loading batches...</p>
         ) : null}
 
         {error ? (
@@ -69,8 +69,8 @@ export default function BatchesPage() {
         {!loading && !error ? (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              <thead className="bg-slate-50">
-                <tr className="border-b border-slate-200">
+              <thead className="bg-subtle">
+                <tr className="border-b border-line">
                   <th className="px-5 py-4 text-left">Batch</th>
                   <th className="px-5 py-4 text-left">File</th>
                   <th className="px-5 py-4 text-left">Status</th>
@@ -84,7 +84,7 @@ export default function BatchesPage() {
                 {batches.map((batch) => (
                   <tr
                     key={batch.id}
-                    className="border-b border-slate-200 hover:bg-slate-50"
+                    className="border-b border-line hover:bg-subtle"
                   >
                     <td className="px-5 py-4 font-semibold">{batch.id}</td>
 
