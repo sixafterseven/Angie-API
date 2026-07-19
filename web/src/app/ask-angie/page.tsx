@@ -107,10 +107,38 @@ function getWebsiteHref(website?: string): string {
   return website.startsWith("http") ? website : `https://${website}`;
 }
 
-function matchesFilters(lead: Lead, filters: AngieFilters): boolean {
-  const leadIndustry = normalize(lead.industry ?? lead.category);
+/**
+ * Loose industry match.
+ *
+ * Leads store the raw Google/Outscraper category ("Dentist", "Dental clinic",
+ * "Cosmetic dentist"), and the model may return a plural ("dentists"), so a
+ * plain substring check misses obvious matches. Alongside the direct check we
+ * compare on a short word stem, so "dentist", "dentists", and "dental" all
+ * find "Dental clinic".
+ */
+function industryMatches(leadIndustry: string | undefined, filter: string): boolean {
+  const lead = normalize(leadIndustry);
+  const wanted = normalize(filter);
 
-  if (filters.industry && !leadIndustry.includes(normalize(filters.industry))) {
+  if (!wanted || lead.includes(wanted)) {
+    return true;
+  }
+
+  const leadWords = lead.split(/[^a-z0-9]+/).filter(Boolean);
+
+  return wanted
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .some((word) => {
+      // Trim up to 3 trailing chars to fold -ist / -al / -or / -ic variants.
+      const stem = word.slice(0, Math.max(4, word.length - 3));
+
+      return stem.length >= 4 && leadWords.some((w) => w.startsWith(stem));
+    });
+}
+
+function matchesFilters(lead: Lead, filters: AngieFilters): boolean {
+  if (filters.industry && !industryMatches(lead.industry ?? lead.category, filters.industry)) {
     return false;
   }
 
