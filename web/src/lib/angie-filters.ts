@@ -9,6 +9,8 @@
  * not import firebase-admin or any server-only package.
  */
 
+export type LeadSort = "score" | "rating" | "reviews";
+
 export type AngieFilters = {
   industry?: string;
   city?: string;
@@ -18,6 +20,12 @@ export type AngieFilters = {
   limit?: number;
   /** When true, out-of-market leads are NOT excluded from results. */
   includeOutOfMarket?: boolean;
+  /** Minimum Google rating (0–5). */
+  minRating?: number;
+  /** When true, drop leads flagged as a possible national chain. */
+  excludeChains?: boolean;
+  /** How the result set should be ordered. */
+  sort?: LeadSort;
 };
 
 export type AngieAction = "call_list" | "email" | "strategy";
@@ -31,7 +39,12 @@ const ALLOWED_FILTER_KEYS = [
   "phone",
   "limit",
   "includeOutOfMarket",
+  "minRating",
+  "excludeChains",
+  "sort",
 ] as const;
+
+const ALLOWED_SORTS: LeadSort[] = ["score", "rating", "reviews"];
 
 export const MAX_QUESTION_LENGTH = 500;
 export const DEFAULT_LEAD_LIMIT = 25;
@@ -242,11 +255,36 @@ export function parseAngieFilters(rawText: string): AngieFilters {
       continue;
     }
 
-    if (key === "website" || key === "phone" || key === "includeOutOfMarket") {
+    if (
+      key === "website" ||
+      key === "phone" ||
+      key === "includeOutOfMarket" ||
+      key === "excludeChains"
+    ) {
       const flag = sanitizeBoolean(value);
 
       if (flag !== undefined) {
         filters[key] = flag;
+      }
+
+      continue;
+    }
+
+    if (key === "minRating") {
+      const rating = sanitizeRating(value);
+
+      if (rating !== undefined) {
+        filters.minRating = rating;
+      }
+
+      continue;
+    }
+
+    if (key === "sort") {
+      const sort = sanitizeText(value);
+
+      if (sort && (ALLOWED_SORTS as string[]).includes(sort)) {
+        filters.sort = sort as LeadSort;
       }
 
       continue;
@@ -262,6 +300,22 @@ export function parseAngieFilters(rawText: string): AngieFilters {
   }
 
   return filters;
+}
+
+/** Clamps a rating filter to the 0–5 Google scale. */
+function sanitizeRating(value: unknown): number | undefined {
+  const numeric =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value)
+        : Number.NaN;
+
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return undefined;
+  }
+
+  return Math.min(numeric, 5);
 }
 
 /**

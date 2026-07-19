@@ -7,7 +7,7 @@
  * is defensive.
  */
 
-import { AngieFilters, toStateCode } from "./angie-filters";
+import { AngieFilters, LeadSort, toStateCode } from "./angie-filters";
 
 /** A qualification reason/warning entry as written by the scoring engine. */
 export type QualificationReason = {
@@ -230,6 +230,14 @@ export function industryMatches(leadIndustry: string | undefined, filter: string
   return expandSynonyms(wanted).some((term) => termMatchesIndustry(lead, term));
 }
 
+/** True when the scoring engine flagged the lead as a possible national chain. */
+export function isChain(lead: Lead): boolean {
+  return (
+    Array.isArray(lead.qualificationWarnings) &&
+    lead.qualificationWarnings.includes("POSSIBLE_NATIONAL_CHAIN")
+  );
+}
+
 /**
  * Deterministic client-side filter. Suppressed / out-of-market leads are hidden
  * unless the filter explicitly opts them in.
@@ -263,9 +271,56 @@ export function matchesFilters(lead: Lead, filters: AngieFilters): boolean {
     return false;
   }
 
+  // A rating floor drops leads below it and those with no rating on file.
+  if (typeof filters.minRating === "number") {
+    if (typeof lead.rating !== "number" || lead.rating < filters.minRating) {
+      return false;
+    }
+  }
+
+  if (filters.excludeChains && isChain(lead)) {
+    return false;
+  }
+
   if (!filters.includeOutOfMarket && lead.geographyStatus === "out_of_market") {
     return false;
   }
 
   return true;
+}
+
+/** Sort key extractors — missing values sort last. */
+function sortValue(lead: Lead, sort: LeadSort): number {
+  if (sort === "rating") {
+    return typeof lead.rating === "number" ? lead.rating : -1;
+  }
+  if (sort === "reviews") {
+    return typeof lead.reviewCount === "number" ? lead.reviewCount : -1;
+  }
+  return typeof lead.overallQualificationScore === "number"
+    ? lead.overallQualificationScore
+    : -1;
+}
+
+/** Returns a new array sorted by the requested key, descending and stable. */
+export function sortLeads(leads: Lead[], sort?: LeadSort): Lead[] {
+  if (!sort) {
+    return leads;
+  }
+
+  return leads
+    .map((lead, index) => ({ lead, index }))
+    .sort((a, b) => {
+      const diff = sortValue(b.lead, sort) - sortValue(a.lead, sort);
+      return diff !== 0 ? diff : a.index - b.index;
+    })
+    .map((entry) => entry.lead);
+}
+
+/** Applies filters then sort then limit — the full deterministic refinement. */
+export function applyRefinement(base: Lead[], filters: AngieFilters): Lead[] {
+  const filtered = base.filter((lead) => matchesFilters(lead, filters));
+  const sorted = sortLeads(filtered, filters.sort);
+  const limit = filters.limit;
+  return typeof limit === "number" ? sorted.slice(0, limit) : sorted;
 }

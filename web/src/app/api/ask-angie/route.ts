@@ -273,6 +273,145 @@ ${question}
   return NextResponse.json({ filters: parseAngieFilters(rawText) });
 }
 
+const CONVERSE_INTENTS = [
+  "new_search",
+  "refine",
+  "lead_question",
+  "strategy",
+  "outreach",
+  "export",
+  "smalltalk",
+] as const;
+
+type ConverseIntent = (typeof CONVERSE_INTENTS)[number];
+
+/**
+ * The conversational brain: classifies one user turn into an intent plus, for
+ * search/refine, a validated filter delta, plus a short reply in Angie's voice.
+ *
+ * The reply is friendly wrapping only — the app fills real counts and renders
+ * real leads, so a hallucinated number in the reply can never reach the result
+ * list. Filters are validated by parseAngieFilters, so the model cannot emit an
+ * arbitrary query.
+ */
+async function handleConverse(body: Record<string, unknown>) {
+  const message = readString(body.message);
+
+  if (!message) {
+    return badRequest("Type a message for Angie first.");
+  }
+
+  if (message.length > MAX_QUESTION_LENGTH) {
+    return badRequest(`Keep it under ${MAX_QUESTION_LENGTH} characters.`);
+  }
+
+  const context = (body.context ?? {}) as Record<string, unknown>;
+  const hasResults = Boolean(context.hasResults);
+  const activeSummary = readString(context.activeSummary) || "none yet";
+  const selectedCount = readNumber(context.selectedCount) ?? 0;
+  const resultCount = readNumber(context.resultCount) ?? 0;
+
+  const rawText = await generateText(`
+You are Angie, a warm, sharp sales assistant for Micah Amari. Classify the
+user's latest message into one intent and return ONLY JSON (no markdown fences):
+
+{"intent": "...", "filters": { ... }, "reply": "..."}
+
+Intents:
+- new_search   : the user wants a fresh set of leads (a new industry/place/criteria, or "start over")
+- refine       : narrow, sort, or limit the CURRENT set (city/rating/sort/limit/no-website/no-chains/add-phone)
+- lead_question: a question about a specific lead or why one ranks where it does
+- strategy     : wants a sales strategy / game plan for the current or selected leads
+- outreach     : wants outreach emails drafted for the current or selected leads
+- export       : wants to download / export the list
+- smalltalk    : greeting or unclear
+
+For new_search and refine, put any of these validated filter fields in "filters"
+(omit the rest). For refine, include ONLY the fields that change:
+  industry(string) city(string) state(2-letter) website(bool) phone(bool)
+  minRating(number 0-5) excludeChains(bool) sort("score"|"rating"|"reviews")
+  limit(number 1-100) includeOutOfMarket(bool)
+For other intents use "filters": {}.
+
+"reply": one or two sentences in Angie's voice. Do NOT state counts, numbers, or
+specific business facts — the app fills those in. Keep it warm and brief.
+
+Current context:
+- active result set: ${activeSummary}
+- results on screen: ${resultCount}
+- selected leads: ${selectedCount}
+- has an active result set: ${hasResults ? "yes" : "no"}
+
+User message:
+${message}
+`);
+
+  const withoutFences = rawText.replace(/\`\`\`(?:json)?/gi, "").trim();
+  const start = withoutFences.indexOf("{");
+  const end = withoutFences.lastIndexOf("}");
+
+  let parsed: Record<string, unknown> = {};
+  if (start >= 0 && end > start) {
+    try {
+      parsed = JSON.parse(withoutFences.slice(start, end + 1));
+    } catch {
+      parsed = {};
+    }
+  }
+
+  const rawIntent = readString(parsed.intent) as ConverseIntent;
+  const intent: ConverseIntent = CONVERSE_INTENTS.includes(rawIntent)
+    ? rawIntent
+    : "smalltalk";
+
+  const filters = parseAngieFilters(JSON.stringify(parsed.filters ?? {}));
+  const reply = sanitizeGenerated(parsed.reply, 400);
+
+  return NextResponse.json({ intent, filters, reply });
+}
+
+/**
+ * Answers a grounded question about specific leads. Facts come only from the
+ * Firestore documents named by leadIds, so Angie cannot invent details.
+ */
+async function handleAnswer(body: Record<string, unknown>) {
+  const message = readString(body.message);
+
+  if (!message) {
+    return badRequest("Ask a question first.");
+  }
+
+  const leadIds = sanitizeLeadIds(body.leadIds, MAX_ACTION_LEADS);
+
+  if (!leadIds.length) {
+    return badRequest("Angie needs at least one lead in view to answer that.");
+  }
+
+  const leads = await loadSalesReadyLeads(leadIds);
+
+  if (!leads.length) {
+    return badRequest("Those leads are no longer available.");
+  }
+
+  const answer = await generateText(`
+You are Angie, a sales assistant for Micah Amari.
+
+${GROUNDING_RULES}
+If the answer is not in the facts, say you do not have that detail.
+
+Answer the user's question in at most 90 words, plain and specific. No markdown
+headings.
+
+Question:
+${message}
+
+Lead facts:
+${buildLeadFacts(leads)}
+`);
+
+  return NextResponse.json({ answer: sanitizeGenerated(answer, 1200) });
+}
+
 async function handleAction(action: AngieAction, body: Record<string, unknown>) {
   const maxLeads = action === "email" ? MAX_EMAIL_LEADS : MAX_ACTION_LEADS;
 
@@ -484,6 +623,14 @@ export async function POST(request: Request) {
 
     if (!action || action === "search") {
       return await handleSearch(payload);
+    }
+
+    if (action === "converse") {
+      return await handleConverse(payload);
+    }
+
+    if (action === "answer") {
+      return await handleAnswer(payload);
     }
 
     if (action === "call_list" || action === "email" || action === "strategy") {

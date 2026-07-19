@@ -65,11 +65,6 @@ export default function AppShell({
   const [authError, setAuthError] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // Close the mobile drawer whenever the route changes.
-  useEffect(() => {
-    setMenuOpen(false);
-  }, [pathname]);
-
   useEffect(() => {
     let finished = false;
 
