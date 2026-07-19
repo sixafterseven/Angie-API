@@ -5,8 +5,8 @@ name: Deploy Cloud Functions
 # a change under functions/ lands on main, it runs the same checks required
 # before commit (lint, build, test) and then deploys the functions.
 #
-# Auth: uses a Google service-account key stored in the repo secret
-# FIREBASE_SERVICE_ACCOUNT (see .github/workflows/README-deploy.md for setup).
+# Auth: keyless, via Workload Identity Federation (no service-account key file).
+# See .github/workflows/README-deploy.md for the one-time GCP setup.
 
 on:
   push:
@@ -28,6 +28,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # Required so the job can mint an OIDC token for Workload Identity Federation.
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -58,7 +60,9 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          project_id: micah-amari-angie-os
+          workload_identity_provider: projects/243784491046/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: github-functions-deployer@micah-amari-angie-os.iam.gserviceaccount.com
 
       - name: Deploy functions
         working-directory: functions
