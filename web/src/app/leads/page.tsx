@@ -98,7 +98,7 @@ function getStatusClasses(lead: Lead): string {
   }
 
   if (lead.validationStatus === "suppressed") {
-    return "bg-slate-200 text-slate-700";
+    return "bg-slate-200 text-ink";
   }
 
   return "bg-emerald-100 text-emerald-800";
@@ -182,15 +182,15 @@ export default function LeadsPage() {
       title="Sales Ready Leads"
       description="Search and browse processed leads."
     >
-      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 p-5">
+      <section className="rounded-2xl border border-line bg-surface shadow-sm">
+        <div className="border-b border-line p-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm font-medium text-slate-500">
+              <p className="text-sm font-medium text-muted">
                 Available leads
               </p>
 
-              <p className="mt-1 text-2xl font-bold text-slate-950">
+              <p className="mt-1 text-2xl font-bold text-ink">
                 {filteredLeads.length}
               </p>
             </div>
@@ -208,14 +208,14 @@ export default function LeadsPage() {
                   setSearch(event.target.value);
                 }}
                 placeholder="Search businesses, phone, city, or industry..."
-                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-950 focus:ring-2 focus:ring-slate-950/10"
+                className="w-full rounded-xl border border-line-strong bg-surface px-4 py-3 text-sm outline-none transition placeholder:text-faint focus:border-slate-950 focus:ring-2 focus:ring-slate-950/10"
               />
             </div>
           </div>
         </div>
 
         {loading ? (
-          <div className="p-8 text-sm text-slate-500">Loading leads...</div>
+          <div className="p-8 text-sm text-muted">Loading leads...</div>
         ) : null}
 
         {error ? (
@@ -227,29 +227,29 @@ export default function LeadsPage() {
         {!loading && !error ? (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              <thead className="bg-slate-50">
-                <tr className="border-b border-slate-200">
-                  <th className="px-5 py-4 text-left font-semibold text-slate-700">
+              <thead className="bg-subtle">
+                <tr className="border-b border-line">
+                  <th className="px-5 py-4 text-left font-semibold text-ink">
                     Business
                   </th>
 
-                  <th className="px-5 py-4 text-left font-semibold text-slate-700">
+                  <th className="px-5 py-4 text-left font-semibold text-ink">
                     Phone
                   </th>
 
-                  <th className="px-5 py-4 text-left font-semibold text-slate-700">
+                  <th className="px-5 py-4 text-left font-semibold text-ink">
                     Website
                   </th>
 
-                  <th className="px-5 py-4 text-left font-semibold text-slate-700">
+                  <th className="px-5 py-4 text-left font-semibold text-ink">
                     City
                   </th>
 
-                  <th className="px-5 py-4 text-left font-semibold text-slate-700">
+                  <th className="px-5 py-4 text-left font-semibold text-ink">
                     Industry
                   </th>
 
-                  <th className="px-5 py-4 text-left font-semibold text-slate-700">
+                  <th className="px-5 py-4 text-left font-semibold text-ink">
                     Status
                   </th>
                 </tr>
@@ -263,18 +263,18 @@ export default function LeadsPage() {
                     <tr
                       key={lead.id}
                       className={[
-                        "border-b border-slate-200",
-                        "transition hover:bg-slate-100",
-                        index % 2 === 0 ? "bg-white" : "bg-slate-50/60",
+                        "border-b border-line",
+                        "transition hover:bg-canvas",
+                        index % 2 === 0 ? "bg-surface" : "bg-subtle/60",
                       ].join(" ")}
                     >
                       <td className="max-w-xs px-5 py-4 align-top">
-                        <p className="truncate font-semibold text-slate-950">
+                        <p className="truncate font-semibold text-ink">
                           {getBusinessName(lead)}
                         </p>
                       </td>
 
-                      <td className="whitespace-nowrap px-5 py-4 align-top text-slate-700">
+                      <td className="whitespace-nowrap px-5 py-4 align-top text-ink">
                         {formatPhone(lead.phone)}
                       </td>
 
@@ -290,15 +290,15 @@ export default function LeadsPage() {
                             {website.label}
                           </a>
                         ) : (
-                          <span className="text-slate-400">—</span>
+                          <span className="text-faint">—</span>
                         )}
                       </td>
 
-                      <td className="whitespace-nowrap px-5 py-4 align-top text-slate-700">
+                      <td className="whitespace-nowrap px-5 py-4 align-top text-ink">
                         {lead.city || "—"}
                       </td>
 
-                      <td className="max-w-xs px-5 py-4 align-top text-slate-700">
+                      <td className="max-w-xs px-5 py-4 align-top text-ink">
                         <span className="block truncate">
                           {lead.industry ?? lead.category ?? "—"}
                         </span>
@@ -322,7 +322,7 @@ export default function LeadsPage() {
             </table>
 
             {filteredLeads.length === 0 ? (
-              <div className="p-10 text-center text-sm text-slate-500">
+              <div className="p-10 text-center text-sm text-muted">
                 No leads matched your search.
               </div>
             ) : null}

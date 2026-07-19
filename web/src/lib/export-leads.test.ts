@@ -1,7 +1,14 @@
 import { describe, it, expect } from "vitest";
 
 import { Lead } from "./leads";
-import { EXPORT_COLUMNS, buildRows, exportFilename, toCsv } from "./export-leads";
+import {
+  EXPORT_COLUMNS,
+  buildRows,
+  buildWorkbook,
+  exportFilename,
+  scopeLeads,
+  toCsv,
+} from "./export-leads";
 
 const sample: Lead = {
   id: "L1",
@@ -58,6 +65,63 @@ describe("toCsv", () => {
   it("has one header row plus one row per lead", () => {
     const csv = toCsv([sample, { ...sample, id: "L2" }]);
     expect(csv.split("\r\n")).toHaveLength(3);
+  });
+});
+
+describe("scopeLeads", () => {
+  const current: Lead[] = [
+    { id: "a" },
+    { id: "b" },
+    { id: "c" },
+    { id: "d" },
+  ];
+  const selected: Lead[] = [{ id: "b" }, { id: "d" }];
+
+  it("current scope returns all current results", () => {
+    expect(scopeLeads({ kind: "current" }, current, selected).map((l) => l.id)).toEqual([
+      "a",
+      "b",
+      "c",
+      "d",
+    ]);
+  });
+
+  it("selected scope returns only selected leads", () => {
+    expect(scopeLeads({ kind: "selected" }, current, selected).map((l) => l.id)).toEqual([
+      "b",
+      "d",
+    ]);
+  });
+
+  it("top-N scope slices the current results", () => {
+    expect(scopeLeads({ kind: "top", n: 2 }, current, selected).map((l) => l.id)).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
+  it("empty scope (no selection) returns nothing", () => {
+    expect(scopeLeads({ kind: "selected" }, current, [])).toEqual([]);
+  });
+});
+
+describe("buildWorkbook", () => {
+  it("produces a Leads sheet with header + data rows", () => {
+    const wb = buildWorkbook([sample]);
+    expect(wb.SheetNames).toEqual(["Leads"]);
+    const sheet = wb.Sheets.Leads;
+    expect(sheet.A1.v).toBe("Business Name");
+    expect(sheet.A2.v).toBe("Bright Smiles, PC");
+  });
+
+  it("keeps phone/ZIP as text cells (leading zeros survive)", () => {
+    const wb = buildWorkbook([sample]);
+    const sheet = wb.Sheets.Leads;
+    const header = buildRows([sample])[0];
+    const zipCol = header.indexOf("ZIP");
+    const addr = `${String.fromCharCode(65 + zipCol)}2`;
+    expect(sheet[addr].t).toBe("s");
+    expect(sheet[addr].v).toBe("03033");
   });
 });
 

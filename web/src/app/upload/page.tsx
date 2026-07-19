@@ -188,7 +188,7 @@ export default function UploadPage() {
       description="Upload a workbook and send it through Clara, Calvin, and Vera."
     >
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="rounded-2xl border border-line bg-surface p-6 shadow-sm">
           {/* Audrey II arcade panel owns the file picker — chomp UPLOAD to feed her. */}
           <AudreyPlant
             phase={audreyPhase(uploadState, Boolean(file))}
@@ -196,13 +196,13 @@ export default function UploadPage() {
             disabled={isBusy}
           />
 
-          <p className="mx-auto mt-4 max-w-lg text-center text-sm leading-6 text-slate-500">
+          <p className="mx-auto mt-4 max-w-lg text-center text-sm leading-6 text-muted">
             Upload the original Outscraper or lead-export workbook. Angie OS
             preserves the source file and creates a separate cleaned version.
           </p>
 
           {file ? (
-            <div className="mt-5 flex items-center gap-4 rounded-xl border border-slate-200 p-4">
+            <div className="mt-5 flex items-center gap-4 rounded-xl border border-line p-4">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
                 <FileSpreadsheet size={22} />
               </div>
@@ -210,7 +210,7 @@ export default function UploadPage() {
               <div className="min-w-0 flex-1">
                 <p className="truncate font-medium">{file.name}</p>
 
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-1 text-xs text-muted">
                   {(file.size / 1024).toFixed(1)} KB
                 </p>
               </div>
@@ -220,7 +220,7 @@ export default function UploadPage() {
                   type="button"
                   onClick={clearFile}
                   aria-label="Remove selected file"
-                  className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                  className="rounded-lg p-2 text-faint transition hover:bg-canvas hover:text-ink"
                 >
                   <X size={19} />
                 </button>
@@ -232,12 +232,12 @@ export default function UploadPage() {
             <div className="mt-5">
               <div className="mb-2 flex items-center justify-between text-sm">
                 <span className="font-medium">Uploading workbook</span>
-                <span className="text-slate-500">{progress}%</span>
+                <span className="text-muted">{progress}%</span>
               </div>
 
               <div className="h-2 overflow-hidden rounded-full bg-slate-200">
                 <div
-                  className="h-full rounded-full bg-slate-950 transition-all"
+                  className="h-full rounded-full bg-accent transition-all"
                   style={{ width: `${progress}%` }}
                 />
               </div>
@@ -280,7 +280,7 @@ export default function UploadPage() {
             type="button"
             onClick={handleUpload}
             disabled={!file || isBusy || uploadState === "complete"}
-            className="mt-6 w-full rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+            className="mt-6 w-full rounded-xl bg-accent px-5 py-3 font-semibold text-white transition hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-40"
           >
             {uploadState === "checking"
               ? "Preparing batch..."
@@ -292,7 +292,7 @@ export default function UploadPage() {
           </button>
         </section>
 
-        <aside className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <aside className="rounded-2xl border border-line bg-surface p-6 shadow-sm">
           <h3 className="font-semibold">What happens next</h3>
 
           <ol className="mt-5 space-y-5">
@@ -319,13 +319,13 @@ export default function UploadPage() {
               ],
             ].map(([number, heading, copy]) => (
               <li key={number} className="flex gap-3">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-950 text-xs font-bold text-white">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">
                   {number}
                 </span>
 
                 <div>
                   <p className="text-sm font-semibold">{heading}</p>
-                  <p className="mt-1 text-sm leading-5 text-slate-500">
+                  <p className="mt-1 text-sm leading-5 text-muted">
                     {copy}
                   </p>
                 </div>

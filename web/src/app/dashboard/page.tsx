@@ -94,21 +94,21 @@ export default function DashboardPage() {
         {cards.map(([label, value]) => (
           <article
             key={String(label)}
-            className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+            className="rounded-2xl border border-line bg-surface p-6 shadow-sm"
           >
-            <p className="text-sm font-medium text-slate-500">{label}</p>
+            <p className="text-sm font-medium text-muted">{label}</p>
 
-            <p className="mt-3 text-4xl font-bold text-slate-950">
+            <p className="mt-3 text-4xl font-bold text-ink">
               {loading ? "—" : value}
             </p>
           </article>
         ))}
       </section>
 
-      <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section className="mt-8 rounded-2xl border border-line bg-surface p-6 shadow-sm">
         <h2 className="text-lg font-semibold">Ready to work</h2>
 
-        <p className="mt-2 text-sm text-slate-600">
+        <p className="mt-2 text-sm text-muted">
           Upload a workbook, review processed leads, or ask Angie to build a
           lead list.
         </p>

@@ -8,6 +8,8 @@
  * of this same column mapping.
  */
 
+import * as XLSX from "xlsx";
+
 import {
   Lead,
   getBusinessName,
@@ -17,6 +19,28 @@ import {
 } from "./leads";
 
 export type ExportColumn = { header: string; value: (lead: Lead) => string };
+export type ExportFormat = "csv" | "xlsx";
+
+/** The export scopes offered in the menu. */
+export type ExportScope =
+  | { kind: "current" }
+  | { kind: "selected" }
+  | { kind: "top"; n: number };
+
+/** Resolves a scope to the actual leads to export. */
+export function scopeLeads(
+  scope: ExportScope,
+  current: Lead[],
+  selected: Lead[],
+): Lead[] {
+  if (scope.kind === "selected") {
+    return selected;
+  }
+  if (scope.kind === "top") {
+    return current.slice(0, Math.max(0, scope.n));
+  }
+  return current;
+}
 
 export const EXPORT_COLUMNS: ExportColumn[] = [
   { header: "Business Name", value: (l) => getBusinessName(l) },
@@ -89,19 +113,81 @@ export function exportFilename(summary: string, dateIso: string, ext: string): s
   return `micah-amari-leads${slug ? `-${slug}` : ""}-${date}.${ext}`;
 }
 
-/** Triggers a browser download of a CSV file. */
-export function downloadCsv(leads: Lead[], summary: string): void {
+function triggerDownload(blob: Blob, filename: string): void {
   if (typeof window === "undefined") {
     return;
   }
-  const csv = toCsv(leads);
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = exportFilename(summary, new Date().toISOString(), "csv");
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+/** Triggers a browser download of a CSV file. */
+export function downloadCsv(leads: Lead[], summary: string): void {
+  const csv = toCsv(leads);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  triggerDownload(blob, exportFilename(summary, new Date().toISOString(), "csv"));
+}
+
+/**
+ * Builds an XLSX worksheet from the same column mapping. Text-preserved columns
+ * (phone / ZIP / ids) are written as explicit string cells so SheetJS does not
+ * coerce them to numbers and drop leading zeros.
+ */
+export function buildWorkbook(leads: Lead[]): XLSX.WorkBook {
+  const rows = buildRows(leads);
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+
+  const textCols = EXPORT_COLUMNS.map((c, i) => (TEXT_COLUMNS.has(c.header) ? i : -1)).filter(
+    (i) => i >= 0,
+  );
+
+  // Force text type on preserved columns (skip the header row).
+  const range = XLSX.utils.decode_range(sheet["!ref"] ?? "A1");
+  for (let r = 1; r <= range.e.r; r += 1) {
+    for (const c of textCols) {
+      const addr = XLSX.utils.encode_cell({ r, c });
+      const cell = sheet[addr];
+      if (cell && cell.v !== "" && cell.v != null) {
+        cell.t = "s";
+        cell.v = String(cell.v);
+      }
+    }
+  }
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, "Leads");
+  return workbook;
+}
+
+/** Triggers a browser download of an XLSX file. */
+export function downloadXlsx(leads: Lead[], summary: string): void {
+  const workbook = buildWorkbook(leads);
+  const out = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+  const blob = new Blob([out], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  triggerDownload(blob, exportFilename(summary, new Date().toISOString(), "xlsx"));
+}
+
+/** Download in the requested format. Returns the number of leads exported. */
+export function downloadLeads(
+  leads: Lead[],
+  summary: string,
+  format: ExportFormat,
+): number {
+  if (!leads.length) {
+    return 0;
+  }
+  if (format === "xlsx") {
+    downloadXlsx(leads, summary);
+  } else {
+    downloadCsv(leads, summary);
+  }
+  return leads.length;
 }
