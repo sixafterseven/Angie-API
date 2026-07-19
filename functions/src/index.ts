@@ -1,5 +1,5 @@
 import {initializeApp} from 'firebase-admin/app';
-import {FieldValue, getFirestore} from 'firebase-admin/firestore';
+import {FieldValue, getFirestore, Timestamp} from 'firebase-admin/firestore';
 import {getStorage} from 'firebase-admin/storage';
 import {logger} from 'firebase-functions';
 import {setGlobalOptions} from 'firebase-functions/v2';
@@ -7,6 +7,7 @@ import {
   onDocumentCreated,
   onDocumentWritten,
 } from 'firebase-functions/v2/firestore';
+import {onSchedule} from 'firebase-functions/v2/scheduler';
 import {onObjectFinalized} from 'firebase-functions/v2/storage';
 import ExcelJS from 'exceljs';
 import {tmpdir} from 'os';
@@ -2230,5 +2231,134 @@ export const processVeraValidationJob = onDocumentCreated(
       } finally {
         await Promise.allSettled([unlink(localSourcePath)]);
       }
+    },
+);
+
+/*
+ * Pipeline sweeper — recovers jobs orphaned at status 'assigned'.
+ *
+ * The Clara/Calvin/Vera processors are onDocumentCreated triggers: they act
+ * only on a job's creation event. If that event is ever dropped (for example
+ * the functions were unavailable when the job was written), the job sits at
+ * 'assigned' forever, because onDocumentCreated never replays a missed event.
+ * This is exactly what stranded three dental batches mid-pipeline.
+ *
+ * This scheduled function finds such stale jobs and re-emits their creation
+ * event (delete then recreate with identical fields), which the matching
+ * processor then picks up. The processors are idempotent, so re-emitting a job
+ * that actually did run is harmless.
+ *
+ * Safety:
+ *  - Only 'assigned' jobs are touched; in_progress / complete / blocked jobs
+ *    are never modified.
+ *  - A job is re-emitted only once its updatedAt is older than
+ *    STALE_THRESHOLD_MS, so a freshly created job that is still processing is
+ *    never disturbed.
+ *  - Re-emits are capped at MAX_SWEEPS. A job that keeps failing is marked
+ *    'blocked' for manual review rather than retried forever.
+ */
+const STALE_THRESHOLD_MS = 5 * 60 * 1000;
+const MAX_SWEEPS = 3;
+
+export const sweepStuckJobs = onSchedule(
+    {
+      schedule: 'every 5 minutes',
+      region: 'us-east1',
+      memory: '256MiB',
+      timeoutSeconds: 120,
+    },
+    async () => {
+      const now = Date.now();
+
+      const snapshot = await db
+          .collection('jobs')
+          .where('status', '==', 'assigned')
+          .get();
+
+      if (snapshot.empty) {
+        logger.info('Pipeline sweeper: no assigned jobs.');
+        return;
+      }
+
+      let reemitted = 0;
+      let blocked = 0;
+      let skipped = 0;
+
+      for (const doc of snapshot.docs) {
+        const data = doc.data();
+
+        // Age gate: never disturb a job that may still be in flight. A healthy
+        // job goes assigned -> complete in seconds, so anything older than the
+        // threshold and still 'assigned' is genuinely stuck.
+        const stamp = data.updatedAt ?? data.createdAt;
+        const stampMs = stamp instanceof Timestamp ? stamp.toMillis() : 0;
+
+        if (stampMs && now - stampMs < STALE_THRESHOLD_MS) {
+          skipped += 1;
+          continue;
+        }
+
+        const sweepCount =
+          typeof data.sweepCount === 'number' ? data.sweepCount : 0;
+
+        // Give up after repeated attempts rather than looping forever on a job
+        // that cannot make progress.
+        if (sweepCount >= MAX_SWEEPS) {
+          await doc.ref.set(
+              {
+                status: 'blocked',
+                updatedAt: FieldValue.serverTimestamp(),
+                notes:
+                  `Pipeline sweeper: still unprocessed after ${MAX_SWEEPS} ` +
+                  'attempts. Marked blocked for manual review.',
+              },
+              {merge: true},
+          );
+          blocked += 1;
+          logger.error('Pipeline sweeper blocked a job after max retries.', {
+            jobId: doc.id,
+            batchId: data.batchId,
+            assignedTo: data.assignedTo,
+            jobType: data.jobType,
+          });
+          continue;
+        }
+
+        // Re-emit the creation event: delete, then recreate with identical
+        // fields so onDocumentCreated fires and the matching processor runs.
+        // createdAt is preserved; updatedAt is refreshed so the age gate does
+        // not immediately re-sweep the recreated job.
+        const fields = {
+          ...data,
+          sweepCount: sweepCount + 1,
+          lastSweptAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        };
+
+        try {
+          await doc.ref.delete();
+          await doc.ref.set(fields);
+          reemitted += 1;
+          logger.info('Pipeline sweeper re-emitted a stuck job.', {
+            jobId: doc.id,
+            batchId: data.batchId,
+            assignedTo: data.assignedTo,
+            jobType: data.jobType,
+            attempt: sweepCount + 1,
+          });
+        } catch (error) {
+          logger.error('Pipeline sweeper failed to re-emit a job.', {
+            jobId: doc.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      logger.info('Pipeline sweeper finished.', {
+        assigned: snapshot.size,
+        reemitted,
+        blocked,
+        skipped,
+      });
     },
 );
