@@ -178,9 +178,9 @@ export default function AppShell({
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-950">
+    <div className="min-h-screen bg-canvas text-ink">
       {/* Mobile top bar — the only nav entry point below lg. */}
-      <div className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-800 bg-slate-950 px-4 py-3 text-white lg:hidden">
+      <div className="sticky top-0 z-30 flex items-center justify-between border-b border-shell-line bg-shell px-4 py-3 text-white lg:hidden">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">
             Micah Amari
@@ -194,7 +194,7 @@ export default function AppShell({
           onClick={() => setMenuOpen(true)}
           aria-label="Open menu"
           aria-expanded={menuOpen}
-          className="rounded-lg p-2 text-slate-200 transition hover:bg-slate-900 hover:text-white"
+          className="rounded-lg p-2 text-slate-200 transition hover:bg-shell-line hover:text-white"
         >
           <Menu size={24} />
         </button>
@@ -203,7 +203,7 @@ export default function AppShell({
       {/* Backdrop behind the mobile drawer. */}
       {menuOpen ? (
         <div
-          className="fixed inset-0 z-40 bg-slate-950/60 lg:hidden"
+          className="fixed inset-0 z-40 bg-shell/60 lg:hidden"
           aria-hidden="true"
           onClick={() => setMenuOpen(false)}
         />
@@ -211,12 +211,12 @@ export default function AppShell({
 
       <aside
         className={[
-          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-slate-950 text-white",
+          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-shell text-white",
           "transition-transform duration-200 ease-out lg:translate-x-0",
           menuOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
         ].join(" ")}
       >
-        <div className="flex items-start justify-between border-b border-slate-800 px-6 py-6">
+        <div className="flex items-start justify-between border-b border-shell-line px-6 py-6">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
               Micah Amari
@@ -224,14 +224,14 @@ export default function AppShell({
 
             <h1 className="mt-2 text-2xl font-bold">Angie OS</h1>
 
-            <p className="mt-1 text-sm text-slate-400">Sales Operations</p>
+            <p className="mt-1 text-sm text-slate-400">Lead desk</p>
           </div>
 
           <button
             type="button"
             onClick={() => setMenuOpen(false)}
             aria-label="Close menu"
-            className="-mr-2 rounded-lg p-2 text-slate-300 transition hover:bg-slate-900 hover:text-white lg:hidden"
+            className="-mr-2 rounded-lg p-2 text-slate-300 transition hover:bg-shell-line hover:text-white lg:hidden"
           >
             <X size={22} />
           </button>
@@ -251,8 +251,8 @@ export default function AppShell({
                   "flex items-center gap-3 rounded-xl px-4 py-3",
                   "text-sm font-medium transition",
                   active
-                    ? "bg-white text-slate-950"
-                    : "text-slate-300 hover:bg-slate-900 hover:text-white",
+                    ? "bg-surface text-ink"
+                    : "text-slate-300 hover:bg-shell-line hover:text-white",
                 ].join(" ")}
               >
                 <Icon size={19} />
@@ -262,7 +262,7 @@ export default function AppShell({
           })}
         </nav>
 
-        <div className="border-t border-slate-800 p-4">
+        <div className="border-t border-shell-line p-4">
           <div className="mb-3 px-3">
             <p className="truncate text-sm font-medium">
               {user.displayName || "Micah Amari Employee"}
@@ -274,7 +274,7 @@ export default function AppShell({
           <button
             type="button"
             onClick={handleSignOut}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm text-slate-300 transition hover:bg-slate-900 hover:text-white"
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm text-slate-300 transition hover:bg-shell-line hover:text-white"
           >
             <LogOut size={18} />
             Sign out
@@ -283,7 +283,7 @@ export default function AppShell({
       </aside>
 
       <div className="lg:pl-64">
-        <header className="border-b border-slate-200 bg-white px-6 py-5 lg:px-10">
+        <header className="border-b border-line bg-surface px-6 py-5 lg:px-10">
           <div className="mx-auto max-w-7xl">
             <h2 className="text-2xl font-bold tracking-tight">{title}</h2>
 
