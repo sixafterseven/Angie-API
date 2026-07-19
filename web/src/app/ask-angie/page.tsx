@@ -108,13 +108,60 @@ function getWebsiteHref(website?: string): string {
 }
 
 /**
+ * Terms that should match each other even when they share no word stem.
+ * Google categorizes dental specialties under their own names ("Orthodontist",
+ * "Periodontist"), so a search for "dentist" would otherwise miss them.
+ */
+const INDUSTRY_SYNONYM_GROUPS: string[][] = [
+  [
+    "dentist",
+    "dental",
+    "orthodontist",
+    "orthodontics",
+    "periodontist",
+    "endodontist",
+    "prosthodontist",
+    "oral surgeon",
+  ],
+  ["chiropractor", "chiropractic"],
+  ["medical spa", "medspa", "med spa", "medical aesthetics"],
+];
+
+/** Expands a search term to itself plus any synonym-group members. */
+function expandSynonyms(term: string): string[] {
+  const group = INDUSTRY_SYNONYM_GROUPS.find((g) =>
+    g.some((t) => term.includes(t) || (term.length >= 4 && t.includes(term))),
+  );
+
+  return group ? Array.from(new Set([term, ...group])) : [term];
+}
+
+/** True when one term matches the lead's category directly or by word stem. */
+function termMatchesIndustry(lead: string, term: string): boolean {
+  if (lead.includes(term)) {
+    return true;
+  }
+
+  const leadWords = lead.split(/[^a-z0-9]+/).filter(Boolean);
+
+  return term
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .some((word) => {
+      // Trim up to 3 trailing chars to fold -ist / -al / -or / -ic variants.
+      const stem = word.slice(0, Math.max(4, word.length - 3));
+
+      return stem.length >= 4 && leadWords.some((w) => w.startsWith(stem));
+    });
+}
+
+/**
  * Loose industry match.
  *
- * Leads store the raw Google/Outscraper category ("Dentist", "Dental clinic",
- * "Cosmetic dentist"), and the model may return a plural ("dentists"), so a
- * plain substring check misses obvious matches. Alongside the direct check we
- * compare on a short word stem, so "dentist", "dentists", and "dental" all
- * find "Dental clinic".
+ * Leads store the raw Google/Outscraper category ("Dentist", "Orthodontist",
+ * "Medical spa"), and the model may return a plural ("dentists"). We match on a
+ * direct substring, a short word stem ("dentist"/"dentists"/"dental"), and a
+ * synonym group (so "dentist" also surfaces "Orthodontist").
  */
 function industryMatches(leadIndustry: string | undefined, filter: string): boolean {
   const lead = normalize(leadIndustry);
@@ -124,17 +171,7 @@ function industryMatches(leadIndustry: string | undefined, filter: string): bool
     return true;
   }
 
-  const leadWords = lead.split(/[^a-z0-9]+/).filter(Boolean);
-
-  return wanted
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean)
-    .some((word) => {
-      // Trim up to 3 trailing chars to fold -ist / -al / -or / -ic variants.
-      const stem = word.slice(0, Math.max(4, word.length - 3));
-
-      return stem.length >= 4 && leadWords.some((w) => w.startsWith(stem));
-    });
+  return expandSynonyms(wanted).some((term) => termMatchesIndustry(lead, term));
 }
 
 function matchesFilters(lead: Lead, filters: AngieFilters): boolean {
