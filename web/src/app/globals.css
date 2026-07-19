@@ -1,28 +1,63 @@
 @import "tailwindcss";
 
+/*
+ * Micah Amari design tokens.
+ *
+ * Warm-neutral, editorial palette — "surfer meets southern belle": relaxed and
+ * warm, but still a serious internal tool. New UI uses these token utilities
+ * (bg-canvas, text-ink, border-line, bg-accent, ...); older screens using raw
+ * slate utilities keep working and are migrated screen by screen.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f7f4ef;
+  --foreground: #201c19;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  /* Surfaces — warm off-whites instead of clinical grays. */
+  --color-canvas: #f7f4ef;
+  --color-surface: #ffffff;
+  --color-subtle: #f1ece4;
+  --color-sunk: #ece5da;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* Ink + text. */
+  --color-ink: #201c19;
+  --color-muted: #6f665d;
+  --color-faint: #9c9186;
+
+  /* Lines. */
+  --color-line: #e6ddd1;
+  --color-line-strong: #d8ccbb;
+
+  /* Accent — warm clay. Confident, not corporate. */
+  --color-accent: #bd5a3c;
+  --color-accent-strong: #a24829;
+  --color-accent-soft: #f6e7de;
+
+  /* Deep warm shell (sidebar). */
+  --color-shell: #211d1a;
+  --color-shell-line: #3a332d;
+
+  /* Status. */
+  --color-positive: #3f7d5b;
+  --color-positive-soft: #e6f0e8;
+  --color-caution: #a5771f;
+  --color-caution-soft: #f7edd8;
+  --color-critical: #b4472e;
+  --color-critical-soft: #f7e4de;
+
+  /* Radii + type. */
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, Arial, sans-serif;
 }
 
 /*

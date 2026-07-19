@@ -2,9 +2,17 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { collection, getDocs, query, where } from "firebase/firestore";
-import { ArrowUpRight, Loader2, Search } from "lucide-react";
+import { Search, Sparkles } from "lucide-react";
 
 import AppShell from "@/components/app-shell";
+import { LeadCard } from "@/components/lead-card";
+import {
+  Button,
+  Card,
+  Chip,
+  EmptyState,
+  TextInput,
+} from "@/components/ui";
 import { auth, db } from "@/lib/firebase";
 import {
   AngieAction,
@@ -12,25 +20,16 @@ import {
   MAX_ACTION_LEADS,
   MAX_EMAIL_LEADS,
   resolveLimit,
-  toStateCode,
 } from "@/lib/angie-filters";
-
-type Lead = {
-  id: string;
-  businessName?: string;
-  companyName?: string;
-  name?: string;
-  phone?: string;
-  website?: string;
-  city?: string;
-  state?: string;
-  industry?: string;
-  category?: string;
-  rating?: number;
-  reviewCount?: number;
-  geographyStatus?: string;
-  isInTargetMarket?: boolean;
-};
+import { COPY, loadingLine } from "@/lib/brand";
+import {
+  Lead,
+  formatPhone,
+  getBusinessName,
+  getLocationLabel,
+  getWebsiteHref,
+  matchesFilters,
+} from "@/lib/leads";
 
 type CallListLead = {
   leadId: string;
@@ -53,168 +52,7 @@ type AngieOutput =
   | { kind: "email"; emails: DraftedEmail[] }
   | { kind: "strategy"; strategy: string };
 
-function getBusinessName(lead: Lead): string {
-  return (
-    lead.businessName ?? lead.companyName ?? lead.name ?? "Unnamed business"
-  );
-}
-
-function normalize(value?: string): string {
-  return value?.trim().toLowerCase() ?? "";
-}
-
-function formatPhone(phone?: string): string {
-  if (!phone) {
-    return "No phone";
-  }
-
-  const digits = phone.replace(/\D/g, "");
-
-  if (digits.length === 10) {
-    return (
-      `(${digits.slice(0, 3)}) ` + `${digits.slice(3, 6)}-${digits.slice(6)}`
-    );
-  }
-
-  if (digits.length === 11 && digits.startsWith("1")) {
-    return (
-      `(${digits.slice(1, 4)}) ` + `${digits.slice(4, 7)}-${digits.slice(7)}`
-    );
-  }
-
-  return phone;
-}
-
-function getWebsiteLabel(website?: string): string {
-  if (!website) {
-    return "No website";
-  }
-
-  try {
-    const url = website.startsWith("http") ? website : `https://${website}`;
-
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return website;
-  }
-}
-
-function getWebsiteHref(website?: string): string {
-  if (!website) {
-    return "#";
-  }
-
-  return website.startsWith("http") ? website : `https://${website}`;
-}
-
-/**
- * Terms that should match each other even when they share no word stem.
- * Google categorizes dental specialties under their own names ("Orthodontist",
- * "Periodontist"), so a search for "dentist" would otherwise miss them.
- */
-const INDUSTRY_SYNONYM_GROUPS: string[][] = [
-  [
-    "dentist",
-    "dental",
-    "orthodontist",
-    "orthodontics",
-    "periodontist",
-    "endodontist",
-    "prosthodontist",
-    "oral surgeon",
-  ],
-  ["chiropractor", "chiropractic"],
-  ["medical spa", "medspa", "med spa", "medical aesthetics"],
-];
-
-/** Expands a search term to itself plus any synonym-group members. */
-function expandSynonyms(term: string): string[] {
-  const group = INDUSTRY_SYNONYM_GROUPS.find((g) =>
-    g.some((t) => term.includes(t) || (term.length >= 4 && t.includes(term))),
-  );
-
-  return group ? Array.from(new Set([term, ...group])) : [term];
-}
-
-/** True when one term matches the lead's category directly or by word stem. */
-function termMatchesIndustry(lead: string, term: string): boolean {
-  if (lead.includes(term)) {
-    return true;
-  }
-
-  const leadWords = lead.split(/[^a-z0-9]+/).filter(Boolean);
-
-  return term
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean)
-    .some((word) => {
-      // Trim up to 3 trailing chars to fold -ist / -al / -or / -ic variants.
-      const stem = word.slice(0, Math.max(4, word.length - 3));
-
-      return stem.length >= 4 && leadWords.some((w) => w.startsWith(stem));
-    });
-}
-
-/**
- * Loose industry match.
- *
- * Leads store the raw Google/Outscraper category ("Dentist", "Orthodontist",
- * "Medical spa"), and the model may return a plural ("dentists"). We match on a
- * direct substring, a short word stem ("dentist"/"dentists"/"dental"), and a
- * synonym group (so "dentist" also surfaces "Orthodontist").
- */
-function industryMatches(leadIndustry: string | undefined, filter: string): boolean {
-  const lead = normalize(leadIndustry);
-  const wanted = normalize(filter);
-
-  if (!wanted || lead.includes(wanted)) {
-    return true;
-  }
-
-  return expandSynonyms(wanted).some((term) => termMatchesIndustry(lead, term));
-}
-
-function matchesFilters(lead: Lead, filters: AngieFilters): boolean {
-  if (filters.industry && !industryMatches(lead.industry ?? lead.category, filters.industry)) {
-    return false;
-  }
-
-  if (filters.city && !normalize(lead.city).includes(normalize(filters.city))) {
-    return false;
-  }
-
-  // Leads store the source `state_code`, so both sides are reduced to a code.
-  if (filters.state && toStateCode(lead.state) !== toStateCode(filters.state)) {
-    return false;
-  }
-
-  if (filters.website === true && !lead.website) {
-    return false;
-  }
-
-  if (filters.website === false && Boolean(lead.website)) {
-    return false;
-  }
-
-  if (filters.phone === true && !lead.phone) {
-    return false;
-  }
-
-  if (filters.phone === false && Boolean(lead.phone)) {
-    return false;
-  }
-
-  // Suppressed / out-of-market leads are hidden unless explicitly requested.
-  if (!filters.includeOutOfMarket && lead.geographyStatus === "out_of_market") {
-    return false;
-  }
-
-  return true;
-}
-
-/**
- * Calls the Angie API with the signed-in user's Firebase ID token.
- */
+/** Calls the Angie API with the signed-in user's Firebase ID token. */
 async function callAngie(body: Record<string, unknown>): Promise<unknown> {
   const currentUser = auth.currentUser;
 
@@ -239,7 +77,7 @@ async function callAngie(body: Record<string, unknown>): Promise<unknown> {
     const message =
       payload && typeof payload === "object" && "error" in payload
         ? String((payload as { error: unknown }).error)
-        : "Angie could not complete that request.";
+        : COPY.genericError;
 
     throw new Error(message);
   }
@@ -247,18 +85,29 @@ async function callAngie(body: Record<string, unknown>): Promise<unknown> {
   return payload;
 }
 
+function contactBlock(lead: Lead): string {
+  return [
+    getBusinessName(lead),
+    formatPhone(lead.phone),
+    lead.email || "",
+    lead.website ? getWebsiteHref(lead.website) : "",
+    getLocationLabel(lead),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 const examples = [
-  "Show me dentists in Atlanta",
-  "Show me medical spas",
-  "Find businesses without websites",
-  "Show me chiropractors with phone numbers",
+  "Orthodontists in Atlanta",
+  "Medical spas with strong reviews",
+  "Chiropractors without a website",
   "Give me 20 leads in Georgia",
 ];
 
 const actionLabels: Record<AngieAction, string> = {
-  call_list: "Build Call List",
-  email: "Draft Email",
-  strategy: "Create Strategy",
+  call_list: COPY.buildCallList,
+  email: COPY.writeEmail,
+  strategy: COPY.buildStrategy,
 };
 
 export default function AskAngiePage() {
@@ -270,15 +119,12 @@ export default function AskAngiePage() {
   const [error, setError] = useState("");
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [runningAction, setRunningAction] = useState<AngieAction | null>(null);
   const [actionError, setActionError] = useState("");
   const [output, setOutput] = useState<AngieOutput | null>(null);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
-
-  // On mobile the generated output/error renders below the whole results list,
-  // so bring it into view as soon as it appears — otherwise it looks like
-  // nothing happened.
   const outputRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -308,6 +154,16 @@ export default function AskAngiePage() {
     setSelectedIds(allSelected ? [] : results.map((lead) => lead.id));
   }
 
+  async function copyContact(lead: Lead) {
+    try {
+      await navigator.clipboard.writeText(contactBlock(lead));
+      setCopiedId(lead.id);
+      window.setTimeout(() => setCopiedId(null), 1500);
+    } catch {
+      // Clipboard can be blocked; fail quietly rather than throwing.
+    }
+  }
+
   async function askAngie(submittedQuestion: string) {
     const trimmedQuestion = submittedQuestion.trim();
 
@@ -328,10 +184,8 @@ export default function AskAngiePage() {
       };
 
       const parsedFilters = payload.filters ?? {};
-
       setFilters(parsedFilters);
 
-      // Only Vera-approved leads are searchable.
       const snapshot = await getDocs(
         query(collection(db, "leads"), where("pipelineStage", "==", "sales_ready")),
       );
@@ -347,12 +201,9 @@ export default function AskAngiePage() {
 
       setResults(matchingLeads.slice(0, resolveLimit(parsedFilters)));
     } catch (caughtError) {
-      const message =
-        caughtError instanceof Error
-          ? caughtError.message
-          : "Angie could not complete the search.";
-
-      setError(message);
+      setError(
+        caughtError instanceof Error ? caughtError.message : COPY.genericError,
+      );
     } finally {
       setLoading(false);
     }
@@ -380,23 +231,14 @@ export default function AskAngiePage() {
           guidance: String(payload.guidance ?? ""),
         });
       } else if (action === "email") {
-        setOutput({
-          kind: "email",
-          emails: (payload.emails as DraftedEmail[]) ?? [],
-        });
+        setOutput({ kind: "email", emails: (payload.emails as DraftedEmail[]) ?? [] });
       } else {
-        setOutput({
-          kind: "strategy",
-          strategy: String(payload.strategy ?? ""),
-        });
+        setOutput({ kind: "strategy", strategy: String(payload.strategy ?? "") });
       }
     } catch (caughtError) {
-      const message =
-        caughtError instanceof Error
-          ? caughtError.message
-          : "Angie could not complete that action.";
-
-      setActionError(message);
+      setActionError(
+        caughtError instanceof Error ? caughtError.message : COPY.genericError,
+      );
     } finally {
       setRunningAction(null);
     }
@@ -408,46 +250,32 @@ export default function AskAngiePage() {
   }
 
   const selectionCount = selectedIds.length;
-
   const overEmailLimit = selectionCount > MAX_EMAIL_LEADS;
   const overActionLimit = selectionCount > MAX_ACTION_LEADS;
+  const activeFilters = filters ? Object.entries(filters) : [];
 
   return (
-    <AppShell
-      title="Ask Angie"
-      description="Search your sales-ready leads using plain English."
-    >
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <form
-          onSubmit={handleSubmit}
-          className="flex flex-col gap-3 sm:flex-row"
-        >
+    <AppShell title="Ask Angie" description="Find leads, then put Angie to work on them.">
+      <Card className="p-6">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-3 sm:flex-row">
           <div className="relative flex-1">
             <Search
-              size={19}
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+              size={18}
+              className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-faint"
             />
-
-            <input
-              type="text"
+            <TextInput
               value={question}
-              onChange={(event) => {
-                setQuestion(event.target.value);
-              }}
-              placeholder="Show me dentists in Atlanta..."
-              className="w-full rounded-xl border border-slate-300 py-3 pl-11 pr-4 text-sm outline-none transition focus:border-slate-950 focus:ring-2 focus:ring-slate-950/10"
+              onChange={(event) => setQuestion(event.target.value)}
+              placeholder={COPY.askPlaceholder}
+              className="pl-11"
+              aria-label="Ask Angie for leads"
             />
           </div>
 
-          <button
-            type="submit"
-            disabled={loading || !question.trim()}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {loading ? <Loader2 size={18} className="animate-spin" /> : null}
-
-            {loading ? "Searching..." : "Ask Angie"}
-          </button>
+          <Button type="submit" busy={loading} disabled={loading || !question.trim()}>
+            {!loading ? <Sparkles size={16} /> : null}
+            {loading ? COPY.askButtonBusy : COPY.askButton}
+          </Button>
         </form>
 
         <div className="mt-5 flex flex-wrap gap-2">
@@ -455,225 +283,132 @@ export default function AskAngiePage() {
             <button
               key={example}
               type="button"
-              onClick={() => {
-                void askAngie(example);
-              }}
+              onClick={() => void askAngie(example)}
               disabled={loading}
-              className="rounded-full border border-slate-300 px-3 py-2 text-xs font-medium text-slate-600 transition hover:border-slate-950 hover:bg-slate-50 hover:text-slate-950 disabled:opacity-50"
+              className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-muted transition hover:border-accent hover:bg-accent-soft hover:text-accent-strong disabled:opacity-50"
             >
               {example}
             </button>
           ))}
         </div>
-      </section>
+      </Card>
 
-      {filters && Object.keys(filters).length > 0 ? (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+      {activeFilters.length > 0 ? (
+        <Card className="mt-6 p-5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-faint">
             Angie understood
           </p>
-
           <div className="mt-3 flex flex-wrap gap-2">
-            {Object.entries(filters).map(([key, value]) => (
-              <span
-                key={key}
-                className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700"
-              >
+            {activeFilters.map(([key, value]) => (
+              <Chip key={key}>
                 {key}: {String(value)}
-              </span>
+              </Chip>
             ))}
           </div>
-        </section>
+        </Card>
       ) : null}
 
-      <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex flex-col gap-4 border-b border-slate-200 px-6 py-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="font-semibold text-slate-950">Results</h2>
-
-              <p className="mt-1 text-sm text-slate-500">
-                {loading
-                  ? "Angie is searching your leads."
-                  : `${results.length} lead${
-                      results.length === 1 ? "" : "s"
-                    } found${
-                      selectionCount ? ` • ${selectionCount} selected` : ""
-                    }`}
-              </p>
-            </div>
-
-            {results.length ? (
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={toggleAll}
-                  className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
-                >
-                  {allSelected ? "Clear selection" : "Select all"}
-                </button>
-
-                {selectionCount ? (
-                  <button
-                    type="button"
-                    onClick={resetActions}
-                    className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-950 hover:text-slate-950"
-                  >
-                    Reset
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
+      {/* Results */}
+      <div className="mt-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-ink">Results</h2>
+            <p className="mt-0.5 text-sm text-muted">
+              {loading
+                ? loadingLine(question.length)
+                : hasSearched
+                  ? `${results.length} lead${results.length === 1 ? "" : "s"}${
+                      selectionCount ? ` · ${selectionCount} selected` : ""
+                    }`
+                  : COPY.noSearchYet}
+            </p>
           </div>
 
-          {selectionCount ? (
-            <div className="flex flex-wrap items-center gap-2">
-              {(Object.keys(actionLabels) as AngieAction[]).map((action) => {
-                const blocked =
-                  action === "email" ? overEmailLimit : overActionLimit;
-
-                return (
-                  <button
-                    key={action}
-                    type="button"
-                    onClick={() => {
-                      void runAction(action);
-                    }}
-                    disabled={Boolean(runningAction) || blocked}
-                    className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {runningAction === action ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : null}
-
-                    {actionLabels[action]}
-                  </button>
-                );
-              })}
-
-              {overActionLimit ? (
-                <p className="text-xs text-amber-700">
-                  Select {MAX_ACTION_LEADS} leads or fewer to run an action.
-                </p>
-              ) : overEmailLimit ? (
-                <p className="text-xs text-amber-700">
-                  Drafting email is limited to {MAX_EMAIL_LEADS} leads.
-                </p>
-              ) : null}
-            </div>
+          {results.length ? (
+            <Button type="button" variant="secondary" size="sm" onClick={toggleAll}>
+              {allSelected ? "Clear selection" : "Select all"}
+            </Button>
           ) : null}
         </div>
 
+        {/* Action bar */}
+        {selectionCount ? (
+          <Card className="mt-4 flex flex-wrap items-center gap-2 p-4">
+            {(Object.keys(actionLabels) as AngieAction[]).map((action) => {
+              const blocked = action === "email" ? overEmailLimit : overActionLimit;
+              return (
+                <Button
+                  key={action}
+                  type="button"
+                  size="sm"
+                  busy={runningAction === action}
+                  disabled={Boolean(runningAction) || blocked}
+                  onClick={() => void runAction(action)}
+                >
+                  {actionLabels[action]}
+                </Button>
+              );
+            })}
+            <Button type="button" variant="ghost" size="sm" onClick={resetActions}>
+              {COPY.newConversation}
+            </Button>
+
+            {overActionLimit ? (
+              <p className="text-xs text-caution">
+                Pick {MAX_ACTION_LEADS} leads or fewer to run an action.
+              </p>
+            ) : overEmailLimit ? (
+              <p className="text-xs text-caution">
+                Drafting outreach is capped at {MAX_EMAIL_LEADS} leads.
+              </p>
+            ) : null}
+          </Card>
+        ) : null}
+
         {error ? (
-          <div className="m-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            {error}
-          </div>
+          <Card className="mt-4 border-critical/30 bg-critical-soft p-4">
+            <p className="text-sm text-critical">{error}</p>
+          </Card>
         ) : null}
 
         {!loading && hasSearched && !error && results.length === 0 ? (
-          <div className="p-10 text-center">
-            <p className="font-medium text-slate-800">
-              No matching leads found.
-            </p>
-
-            <p className="mt-2 text-sm text-slate-500">
-              Try broadening the location or industry.
-            </p>
-          </div>
+          <Card className="mt-4">
+            <EmptyState title={COPY.emptyResults} hint={COPY.emptyResultsHint} />
+          </Card>
         ) : null}
 
-        {results.map((lead) => {
-          const selected = selectedSet.has(lead.id);
+        {results.length ? (
+          <div className="mt-4 space-y-3">
+            {results.map((lead) => (
+              <LeadCard
+                key={lead.id}
+                lead={lead}
+                selected={selectedSet.has(lead.id)}
+                onToggle={() => toggleLead(lead.id)}
+                onCopyContact={() => void copyContact(lead)}
+                copied={copiedId === lead.id}
+              />
+            ))}
+          </div>
+        ) : null}
+      </div>
 
-          return (
-            <article
-              key={lead.id}
-              className={[
-                "grid gap-4 border-b border-slate-200 px-6 py-5 transition",
-                "last:border-b-0 md:grid-cols-[auto_minmax(0,1.5fr)_minmax(0,1fr)_auto]",
-                selected ? "bg-slate-50" : "hover:bg-slate-50",
-              ].join(" ")}
-            >
-              <label className="flex items-start pt-1">
-                <span className="sr-only">Select {getBusinessName(lead)}</span>
-
-                <input
-                  type="checkbox"
-                  checked={selected}
-                  onChange={() => {
-                    toggleLead(lead.id);
-                  }}
-                  className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-slate-950"
-                />
-              </label>
-
-              <div className="min-w-0">
-                <h3 className="truncate font-semibold text-slate-950">
-                  {getBusinessName(lead)}
-                </h3>
-
-                <p className="mt-1 text-sm text-slate-500">
-                  {[lead.city, lead.state, lead.industry ?? lead.category]
-                    .filter(Boolean)
-                    .join(" • ") || "Location unavailable"}
-                </p>
-              </div>
-
-              <div className="text-sm">
-                <p className="text-slate-700">{formatPhone(lead.phone)}</p>
-
-                {lead.website ? (
-                  <a
-                    href={getWebsiteHref(lead.website)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-1 block truncate font-medium text-blue-700 hover:underline"
-                  >
-                    {getWebsiteLabel(lead.website)}
-                  </a>
-                ) : (
-                  <p className="mt-1 text-slate-400">No website</p>
-                )}
-              </div>
-
-              {lead.website ? (
-                <a
-                  href={getWebsiteHref(lead.website)}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={`Open ${getBusinessName(lead)} website`}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300 text-slate-600 transition hover:border-slate-950 hover:text-slate-950"
-                >
-                  <ArrowUpRight size={18} />
-                </a>
-              ) : null}
-            </article>
-          );
-        })}
-      </section>
-
-      {/* Scroll anchor so generated output/errors are brought into view. */}
       <div ref={outputRef} className="scroll-mt-6" />
 
       {actionError ? (
-        <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-          {actionError}
-        </div>
+        <Card className="mt-6 border-critical/30 bg-critical-soft p-4">
+          <p className="text-sm text-critical">{actionError}</p>
+        </Card>
       ) : null}
 
       {output ? (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Card className="mt-6 p-6">
           <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-slate-950">
-              {actionLabels[output.kind]}
-            </h2>
-
+            <h2 className="font-semibold text-ink">{actionLabels[output.kind]}</h2>
             <button
               type="button"
-              onClick={() => {
-                setOutput(null);
-              }}
-              className="text-xs font-semibold text-slate-500 hover:text-slate-950"
+              onClick={() => setOutput(null)}
+              className="text-xs font-semibold text-muted transition hover:text-ink"
             >
               Dismiss
             </button>
@@ -682,51 +417,33 @@ export default function AskAngiePage() {
           {output.kind === "call_list" ? (
             <div className="mt-4">
               {output.guidance ? (
-                <p className="whitespace-pre-wrap rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+                <p className="whitespace-pre-wrap rounded-xl bg-subtle p-4 text-sm leading-6 text-ink">
                   {output.guidance}
                 </p>
               ) : null}
 
               <div className="mt-4 overflow-x-auto">
                 <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50">
-                    <tr className="border-b border-slate-200">
-                      <th className="px-4 py-3 text-left font-semibold text-slate-700">
-                        #
-                      </th>
-                      <th className="px-4 py-3 text-left font-semibold text-slate-700">
-                        Business
-                      </th>
-                      <th className="px-4 py-3 text-left font-semibold text-slate-700">
-                        Phone
-                      </th>
-                      <th className="px-4 py-3 text-left font-semibold text-slate-700">
-                        Location
-                      </th>
+                  <thead className="bg-subtle text-left">
+                    <tr className="border-b border-line">
+                      <th className="px-4 py-3 font-semibold text-muted">#</th>
+                      <th className="px-4 py-3 font-semibold text-muted">Business</th>
+                      <th className="px-4 py-3 font-semibold text-muted">Phone</th>
+                      <th className="px-4 py-3 font-semibold text-muted">Location</th>
                     </tr>
                   </thead>
-
                   <tbody>
                     {output.leads.map((lead, index) => (
-                      <tr
-                        key={lead.leadId}
-                        className="border-b border-slate-200 last:border-b-0"
-                      >
-                        <td className="px-4 py-3 text-slate-500">
-                          {index + 1}
-                        </td>
-
-                        <td className="px-4 py-3 font-medium text-slate-950">
+                      <tr key={lead.leadId} className="border-b border-line last:border-0">
+                        <td className="px-4 py-3 text-faint">{index + 1}</td>
+                        <td className="px-4 py-3 font-medium text-ink">
                           {lead.businessName || "Unnamed business"}
                         </td>
-
-                        <td className="whitespace-nowrap px-4 py-3 text-slate-700">
+                        <td className="whitespace-nowrap px-4 py-3 text-ink">
                           {formatPhone(lead.phone)}
                         </td>
-
-                        <td className="px-4 py-3 text-slate-700">
-                          {[lead.city, lead.state].filter(Boolean).join(", ") ||
-                            "—"}
+                        <td className="px-4 py-3 text-ink">
+                          {[lead.city, lead.state].filter(Boolean).join(", ") || "—"}
                         </td>
                       </tr>
                     ))}
@@ -739,32 +456,25 @@ export default function AskAngiePage() {
           {output.kind === "email" ? (
             <div className="mt-4 space-y-4">
               {output.emails.map((email) => (
-                <article
-                  key={email.leadId}
-                  className="rounded-xl border border-slate-200 p-4"
-                >
-                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <div key={email.leadId} className="rounded-xl border border-line p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-faint">
                     {email.businessName || "Unnamed business"}
                   </p>
-
-                  <p className="mt-2 font-semibold text-slate-950">
-                    {email.subject}
-                  </p>
-
-                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                  <p className="mt-2 font-semibold text-ink">{email.subject}</p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted">
                     {email.body}
                   </p>
-                </article>
+                </div>
               ))}
             </div>
           ) : null}
 
           {output.kind === "strategy" ? (
-            <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+            <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-muted">
               {output.strategy}
             </p>
           ) : null}
-        </section>
+        </Card>
       ) : null}
     </AppShell>
   );
