@@ -134,6 +134,14 @@ export default function AskAngiePage() {
     [session?.selectedLeadIds],
   );
 
+  const selectedSet = useMemo(
+    () => new Set(session?.selectedLeadIds ?? []),
+    [session?.selectedLeadIds],
+  );
+
+  // Load the full sales-ready set once, and restore any persisted conversation.
+  // All setState happens inside the async task so nothing runs synchronously in
+  // the effect body.
   useEffect(() => {
     let cancelled = false;
     (async () => {
