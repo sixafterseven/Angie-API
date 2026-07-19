@@ -9,42 +9,43 @@
  * slate utilities keep working and are migrated screen by screen.
  */
 :root {
-  --background: #f7f4ef;
-  --foreground: #201c19;
+  --background: #f1f6f6;
+  --foreground: #14313b;
 }
 
 @theme inline {
   /* Surfaces — warm off-whites instead of clinical grays. */
-  --color-canvas: #f7f4ef;
+  --color-canvas: #f1f6f6;
   --color-surface: #ffffff;
-  --color-subtle: #f1ece4;
-  --color-sunk: #ece5da;
+  --color-subtle: #e6f0f0;
+  --color-sunk: #d9e8e8;
 
   /* Ink + text. */
-  --color-ink: #201c19;
-  --color-muted: #6f665d;
-  --color-faint: #9c9186;
+  --color-ink: #14313b;
+  --color-muted: #566f76;
+  --color-faint: #86a1a6;
 
   /* Lines. */
-  --color-line: #e6ddd1;
-  --color-line-strong: #d8ccbb;
+  --color-line: #d8e6e6;
+  --color-line-strong: #c2d6d6;
 
   /* Accent — warm clay. Confident, not corporate. */
-  --color-accent: #bd5a3c;
-  --color-accent-strong: #a24829;
-  --color-accent-soft: #f6e7de;
+  --color-accent: #0d485a;
+  --color-accent-strong: #093846;
+  --color-accent-soft: #d7f0f0;
+  --color-highlight: #00cccc;
 
   /* Deep warm shell (sidebar). */
-  --color-shell: #211d1a;
-  --color-shell-line: #3a332d;
+  --color-shell: #0b2a34;
+  --color-shell-line: #1c3d47;
 
   /* Status. */
-  --color-positive: #3f7d5b;
-  --color-positive-soft: #e6f0e8;
+  --color-positive: #1f8a7a;
+  --color-positive-soft: #d9efeb;
   --color-caution: #a5771f;
   --color-caution-soft: #f7edd8;
-  --color-critical: #b4472e;
-  --color-critical-soft: #f7e4de;
+  --color-critical: #c0453a;
+  --color-critical-soft: #f7e2df;
 
   /* Radii + type. */
   --radius-lg: 1rem;

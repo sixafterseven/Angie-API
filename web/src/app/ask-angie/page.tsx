@@ -2,43 +2,43 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { collection, getDocs, query, where } from "firebase/firestore";
-import { Search, Sparkles } from "lucide-react";
+import { RotateCcw, Send } from "lucide-react";
 
 import AppShell from "@/components/app-shell";
 import { LeadCard } from "@/components/lead-card";
-import {
-  Button,
-  Card,
-  Chip,
-  EmptyState,
-  TextInput,
-} from "@/components/ui";
+import { ChatBubble, ThinkingBubble } from "@/components/chat";
+import { Button, Chip, TextInput } from "@/components/ui";
 import { auth, db } from "@/lib/firebase";
 import {
-  AngieAction,
   AngieFilters,
   MAX_ACTION_LEADS,
   MAX_EMAIL_LEADS,
-  resolveLimit,
 } from "@/lib/angie-filters";
-import { COPY, loadingLine } from "@/lib/brand";
+import { COPY } from "@/lib/brand";
 import {
   Lead,
+  applyRefinement,
   formatPhone,
   getBusinessName,
   getLocationLabel,
   getWebsiteHref,
-  matchesFilters,
 } from "@/lib/leads";
-
-type CallListLead = {
-  leadId: string;
-  businessName: string;
-  phone: string;
-  city: string;
-  state: string;
-  category: string;
-};
+import {
+  AngieIntent,
+  ChatMessage,
+  SessionState,
+  clearPersisted,
+  createSession,
+  filterChips,
+  loadPersisted,
+  makeMessage,
+  mergeFilters,
+  nowMs,
+  removeFilter,
+  savePersisted,
+  summarizeFilters,
+} from "@/lib/angie-session";
+import { downloadCsv } from "@/lib/export-leads";
 
 type DraftedEmail = {
   leadId: string;
@@ -47,42 +47,49 @@ type DraftedEmail = {
   body: string;
 };
 
-type AngieOutput =
-  | { kind: "call_list"; leads: CallListLead[]; guidance: string }
-  | { kind: "email"; emails: DraftedEmail[] }
-  | { kind: "strategy"; strategy: string };
-
-/** Calls the Angie API with the signed-in user's Firebase ID token. */
-async function callAngie(body: Record<string, unknown>): Promise<unknown> {
+async function callAngie(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const currentUser = auth.currentUser;
-
   if (!currentUser) {
     throw new Error("Your session expired. Sign in again.");
   }
-
   const token = await currentUser.getIdToken();
-
   const response = await fetch("/api/ask-angie", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
   });
-
   const payload = await response.json().catch(() => null);
-
   if (!response.ok) {
     const message =
       payload && typeof payload === "object" && "error" in payload
         ? String((payload as { error: unknown }).error)
         : COPY.genericError;
-
     throw new Error(message);
   }
+  return (payload ?? {}) as Record<string, unknown>;
+}
 
-  return payload;
+/**
+ * Pure state transform for a search/refine (module-level so it never runs
+ * during render). Timestamps are passed in from the calling event handler.
+ */
+function computeSearch(
+  baseLeads: Lead[],
+  state: SessionState,
+  filters: AngieFilters,
+  now: number,
+  intent: "new_search" | "refine",
+): SessionState {
+  const refined = applyRefinement(baseLeads, filters);
+  return {
+    ...state,
+    activeFilters: filters,
+    activeSort: filters.sort,
+    activeSearchSummary: summarizeFilters(filters),
+    activeLeadIds: refined.map((lead) => lead.id),
+    lastIntent: intent,
+    updatedAt: now,
+  };
 }
 
 function contactBlock(lead: Lead): string {
@@ -97,61 +104,110 @@ function contactBlock(lead: Lead): string {
     .join("\n");
 }
 
-const examples = [
+const STARTERS = [
   "Orthodontists in Atlanta",
   "Medical spas with strong reviews",
   "Chiropractors without a website",
-  "Give me 20 leads in Georgia",
 ];
 
-const actionLabels: Record<AngieAction, string> = {
-  call_list: COPY.buildCallList,
-  email: COPY.writeEmail,
-  strategy: COPY.buildStrategy,
-};
-
 export default function AskAngiePage() {
-  const [question, setQuestion] = useState("");
-  const [results, setResults] = useState<Lead[]>([]);
-  const [filters, setFilters] = useState<AngieFilters | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [error, setError] = useState("");
+  const [baseLeads, setBaseLeads] = useState<Lead[]>([]);
+  const [baseLoaded, setBaseLoaded] = useState(false);
+  const [baseError, setBaseError] = useState("");
 
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [session, setSession] = useState<SessionState | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState("");
+  const [thinking, setThinking] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [runningAction, setRunningAction] = useState<AngieAction | null>(null);
-  const [actionError, setActionError] = useState("");
-  const [output, setOutput] = useState<AngieOutput | null>(null);
 
-  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
-  const outputRef = useRef<HTMLDivElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
 
+  const byId = useMemo(() => {
+    const map = new Map<string, Lead>();
+    baseLeads.forEach((lead) => map.set(lead.id, lead));
+    return map;
+  }, [baseLeads]);
+
+  const selectedSet = useMemo(
+    () => new Set(session?.selectedLeadIds ?? []),
+    [session?.selectedLeadIds],
+  );
+
+  // Load the full sales-ready set once, and restore any persisted conversation.
+  // All setState happens inside the async task so nothing runs synchronously in
+  // the effect body.
   useEffect(() => {
-    if (output || actionError) {
-      outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    let cancelled = false;
+
+    (async () => {
+      const persisted = loadPersisted();
+      if (!cancelled) {
+        if (persisted) {
+          setSession(persisted.state);
+          setMessages(persisted.messages);
+        } else {
+          setSession(createSession(auth.currentUser?.uid ?? "anon"));
+        }
+      }
+
+      try {
+        const snapshot = await getDocs(
+          query(collection(db, "leads"), where("pipelineStage", "==", "sales_ready")),
+        );
+        if (!cancelled) {
+          setBaseLeads(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as Lead[]);
+        }
+      } catch {
+        if (!cancelled) {
+          setBaseError("Angie couldn't reach your leads. Refresh and try again.");
+        }
+      } finally {
+        if (!cancelled) {
+          setBaseLoaded(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Persist + autoscroll whenever the transcript or state changes.
+  useEffect(() => {
+    if (session) {
+      savePersisted(session, messages);
     }
-  }, [output, actionError]);
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [session, messages]);
 
-  const allSelected =
-    results.length > 0 && results.every((lead) => selectedSet.has(lead.id));
+  function pushMessage(message: ChatMessage) {
+    setMessages((current) => [...current, message]);
+  }
 
-  function resetActions() {
-    setSelectedIds([]);
-    setOutput(null);
-    setActionError("");
+  function activeLeads(state: SessionState): Lead[] {
+    return state.activeLeadIds.map((id) => byId.get(id)).filter(Boolean) as Lead[];
+  }
+
+  /** Leads an action should run on: the selection if any, else the active set. */
+  function actionLeadIds(state: SessionState, cap: number): string[] {
+    const ids = state.selectedLeadIds.length
+      ? state.selectedLeadIds
+      : state.activeLeadIds;
+    return ids.slice(0, cap);
   }
 
   function toggleLead(leadId: string) {
-    setSelectedIds((current) =>
-      current.includes(leadId)
-        ? current.filter((id) => id !== leadId)
-        : [...current, leadId],
-    );
-  }
-
-  function toggleAll() {
-    setSelectedIds(allSelected ? [] : results.map((lead) => lead.id));
+    if (!session) return;
+    const has = session.selectedLeadIds.includes(leadId);
+    setSession({
+      ...session,
+      selectedLeadIds: has
+        ? session.selectedLeadIds.filter((id) => id !== leadId)
+        : [...session.selectedLeadIds, leadId],
+      updatedAt: nowMs(),
+    });
   }
 
   async function copyContact(lead: Lead) {
@@ -160,322 +216,339 @@ export default function AskAngiePage() {
       setCopiedId(lead.id);
       window.setTimeout(() => setCopiedId(null), 1500);
     } catch {
-      // Clipboard can be blocked; fail quietly rather than throwing.
+      /* clipboard blocked — ignore */
     }
   }
 
-  async function askAngie(submittedQuestion: string) {
-    const trimmedQuestion = submittedQuestion.trim();
+  function resultsMessage(state: SessionState, note: string): ChatMessage {
+    const count = state.activeLeadIds.length;
+    const text = count
+      ? `${note} ${count} lead${count === 1 ? "" : "s"} — ${state.activeSearchSummary}.`
+      : COPY.emptyResults;
+    return makeMessage("angie", text, "results", { leadIds: state.activeLeadIds });
+  }
 
-    if (!trimmedQuestion) {
+  function startFresh() {
+    clearPersisted();
+    const fresh = createSession(auth.currentUser?.uid ?? "anon");
+    setSession(fresh);
+    setMessages([]);
+    setInput("");
+  }
+
+  function removeChip(key: keyof AngieFilters) {
+    if (!session) return;
+    const filters = removeFilter(session.activeFilters, key);
+    const next = computeSearch(baseLeads, session, filters, nowMs(), "refine");
+    setSession(next);
+    pushMessage(resultsMessage(next, "Dropped that filter —"));
+  }
+
+  async function send(raw: string) {
+    const message = raw.trim();
+    if (!message || thinking || !session) {
       return;
     }
 
-    setQuestion(trimmedQuestion);
-    setLoading(true);
-    setHasSearched(true);
-    setError("");
-    setResults([]);
-    resetActions();
+    setInput("");
+    pushMessage(makeMessage("user", message));
+    setThinking(true);
+
+    const state = session;
+    const hasResults = state.activeLeadIds.length > 0;
 
     try {
-      const payload = (await callAngie({ question: trimmedQuestion })) as {
-        filters?: AngieFilters;
+      const { intent, filters, reply } = (await callAngie({
+        action: "converse",
+        message,
+        context: {
+          hasResults,
+          activeSummary: state.activeSearchSummary || "none yet",
+          selectedCount: state.selectedLeadIds.length,
+          resultCount: state.activeLeadIds.length,
+        },
+      })) as {
+        intent: AngieIntent;
+        filters: AngieFilters;
+        reply: string;
       };
 
-      const parsedFilters = payload.filters ?? {};
-      setFilters(parsedFilters);
-
-      const snapshot = await getDocs(
-        query(collection(db, "leads"), where("pipelineStage", "==", "sales_ready")),
-      );
-
-      const allLeads = snapshot.docs.map((leadDocument) => ({
-        id: leadDocument.id,
-        ...leadDocument.data(),
-      })) as Lead[];
-
-      const matchingLeads = allLeads.filter((lead) =>
-        matchesFilters(lead, parsedFilters),
-      );
-
-      setResults(matchingLeads.slice(0, resolveLimit(parsedFilters)));
-    } catch (caughtError) {
-      setError(
-        caughtError instanceof Error ? caughtError.message : COPY.genericError,
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function runAction(action: AngieAction) {
-    if (!selectedIds.length || runningAction) {
-      return;
-    }
-
-    setRunningAction(action);
-    setActionError("");
-    setOutput(null);
-
-    try {
-      const payload = (await callAngie({
-        action,
-        leadIds: selectedIds,
-      })) as Record<string, unknown>;
-
-      if (action === "call_list") {
-        setOutput({
-          kind: "call_list",
-          leads: (payload.leads as CallListLead[]) ?? [],
-          guidance: String(payload.guidance ?? ""),
-        });
-      } else if (action === "email") {
-        setOutput({ kind: "email", emails: (payload.emails as DraftedEmail[]) ?? [] });
-      } else {
-        setOutput({ kind: "strategy", strategy: String(payload.strategy ?? "") });
+      if (reply) {
+        pushMessage(makeMessage("angie", reply));
       }
+
+      if (intent === "new_search") {
+        const next = computeSearch(baseLeads, state, filters ?? {}, nowMs(), "new_search");
+        setSession(next);
+        pushMessage(resultsMessage(next, "Here's what I found —"));
+      } else if (intent === "refine") {
+        if (!hasResults) {
+          const next = computeSearch(baseLeads, state, filters ?? {}, nowMs(), "new_search");
+          setSession(next);
+          pushMessage(resultsMessage(next, "Here's what I found —"));
+        } else {
+          const merged = mergeFilters(state.activeFilters, filters ?? {});
+          const next = computeSearch(baseLeads, state, merged, nowMs(), "refine");
+          setSession(next);
+          pushMessage(resultsMessage(next, "Refined —"));
+        }
+      } else if (intent === "lead_question") {
+        const ids = actionLeadIds(state, MAX_ACTION_LEADS);
+        if (!ids.length) {
+          pushMessage(
+            makeMessage("angie", "Pull up some leads first and I'll dig in."),
+          );
+        } else {
+          const { answer } = (await callAngie({
+            action: "answer",
+            message,
+            leadIds: ids,
+          })) as { answer: string };
+          pushMessage(makeMessage("angie", answer || "I don't have that detail on file."));
+        }
+      } else if (intent === "strategy") {
+        const ids = actionLeadIds(state, MAX_ACTION_LEADS);
+        if (!ids.length) {
+          pushMessage(makeMessage("angie", "Give me a list first and I'll build a plan."));
+        } else {
+          const { strategy } = (await callAngie({
+            action: "strategy",
+            leadIds: ids,
+          })) as { strategy: string };
+          pushMessage(makeMessage("angie", "Here's the game plan.", "strategy", { strategy }));
+          setSession((c) => (c ? { ...c, lastGeneratedStrategy: strategy } : c));
+        }
+      } else if (intent === "outreach") {
+        const ids = actionLeadIds(state, MAX_EMAIL_LEADS);
+        if (!ids.length) {
+          pushMessage(makeMessage("angie", "Point me at some leads and I'll draft outreach."));
+        } else {
+          const { emails } = (await callAngie({
+            action: "email",
+            leadIds: ids,
+          })) as { emails: DraftedEmail[] };
+          pushMessage(
+            makeMessage("angie", "Drafted these — tweak away.", "email", { emails: emails ?? [] }),
+          );
+          setSession((c) => (c ? { ...c, lastGeneratedOutreach: emails } : c));
+        }
+      } else if (intent === "export") {
+        const leads = activeLeads(state);
+        if (!leads.length) {
+          pushMessage(makeMessage("angie", "Nothing to export yet — search first."));
+        } else {
+          downloadCsv(leads, state.activeSearchSummary);
+          pushMessage(
+            makeMessage(
+              "angie",
+              `Downloading ${leads.length} lead${leads.length === 1 ? "" : "s"} as CSV.`,
+            ),
+          );
+        }
+      }
+      // smalltalk: the reply above is enough.
     } catch (caughtError) {
-      setActionError(
-        caughtError instanceof Error ? caughtError.message : COPY.genericError,
+      pushMessage(
+        makeMessage(
+          "angie",
+          caughtError instanceof Error ? caughtError.message : COPY.genericError,
+        ),
       );
     } finally {
-      setRunningAction(null);
+      setThinking(false);
     }
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void askAngie(question);
+    void send(input);
   }
 
-  const selectionCount = selectedIds.length;
-  const overEmailLimit = selectionCount > MAX_EMAIL_LEADS;
-  const overActionLimit = selectionCount > MAX_ACTION_LEADS;
-  const activeFilters = filters ? Object.entries(filters) : [];
+  const chips = session ? filterChips(session.activeFilters) : [];
 
   return (
-    <AppShell title="Ask Angie" description="Find leads, then put Angie to work on them.">
-      <Card className="p-6">
-        <form onSubmit={handleSubmit} className="flex flex-col gap-3 sm:flex-row">
-          <div className="relative flex-1">
-            <Search
-              size={18}
-              className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-faint"
-            />
-            <TextInput
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              placeholder={COPY.askPlaceholder}
-              className="pl-11"
-              aria-label="Ask Angie for leads"
-            />
-          </div>
-
-          <Button type="submit" busy={loading} disabled={loading || !question.trim()}>
-            {!loading ? <Sparkles size={16} /> : null}
-            {loading ? COPY.askButtonBusy : COPY.askButton}
-          </Button>
-        </form>
-
-        <div className="mt-5 flex flex-wrap gap-2">
-          {examples.map((example) => (
-            <button
-              key={example}
-              type="button"
-              onClick={() => void askAngie(example)}
-              disabled={loading}
-              className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-muted transition hover:border-accent hover:bg-accent-soft hover:text-accent-strong disabled:opacity-50"
+    <AppShell title="Ask Angie" description="Chat your way to the right leads.">
+      {/* Active-filter bar */}
+      {chips.length ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-faint">
+            Active
+          </span>
+          {chips.map((chip) => (
+            <Chip
+              key={chip.key}
+              onRemove={() => removeChip(chip.key)}
+              removeLabel={`Remove ${chip.label}`}
             >
-              {example}
-            </button>
+              {chip.label}
+            </Chip>
           ))}
+          <button
+            type="button"
+            onClick={startFresh}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold text-muted transition hover:text-accent"
+          >
+            <RotateCcw size={13} />
+            {COPY.newConversation}
+          </button>
         </div>
-      </Card>
+      ) : (
+        <div className="mb-4 flex justify-end">
+          <button
+            type="button"
+            onClick={startFresh}
+            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold text-muted transition hover:text-accent"
+          >
+            <RotateCcw size={13} />
+            {COPY.newConversation}
+          </button>
+        </div>
+      )}
 
-      {activeFilters.length > 0 ? (
-        <Card className="mt-6 p-5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-faint">
-            Angie understood
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {activeFilters.map(([key, value]) => (
-              <Chip key={key}>
-                {key}: {String(value)}
-              </Chip>
-            ))}
-          </div>
-        </Card>
-      ) : null}
-
-      {/* Results */}
-      <div className="mt-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="font-semibold text-ink">Results</h2>
-            <p className="mt-0.5 text-sm text-muted">
-              {loading
-                ? loadingLine(question.length)
-                : hasSearched
-                  ? `${results.length} lead${results.length === 1 ? "" : "s"}${
-                      selectionCount ? ` · ${selectionCount} selected` : ""
-                    }`
-                  : COPY.noSearchYet}
+      {/* Transcript */}
+      <div className="space-y-5">
+        {messages.length === 0 ? (
+          <div className="rounded-2xl border border-line bg-surface p-6">
+            <p className="text-sm text-ink">
+              Hey — I&rsquo;m Angie. Tell me what kind of leads you&rsquo;re after and
+              I&rsquo;ll pull them up. Then we can refine, build a call list, draft
+              outreach, or map out a plan — just keep talking.
             </p>
-          </div>
-
-          {results.length ? (
-            <Button type="button" variant="secondary" size="sm" onClick={toggleAll}>
-              {allSelected ? "Clear selection" : "Select all"}
-            </Button>
-          ) : null}
-        </div>
-
-        {/* Action bar */}
-        {selectionCount ? (
-          <Card className="mt-4 flex flex-wrap items-center gap-2 p-4">
-            {(Object.keys(actionLabels) as AngieAction[]).map((action) => {
-              const blocked = action === "email" ? overEmailLimit : overActionLimit;
-              return (
-                <Button
-                  key={action}
+            <div className="mt-4 flex flex-wrap gap-2">
+              {STARTERS.map((starter) => (
+                <button
+                  key={starter}
                   type="button"
-                  size="sm"
-                  busy={runningAction === action}
-                  disabled={Boolean(runningAction) || blocked}
-                  onClick={() => void runAction(action)}
+                  onClick={() => void send(starter)}
+                  disabled={!baseLoaded}
+                  className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-muted transition hover:border-accent hover:bg-accent-soft hover:text-accent-strong disabled:opacity-50"
                 >
-                  {actionLabels[action]}
-                </Button>
-              );
-            })}
-            <Button type="button" variant="ghost" size="sm" onClick={resetActions}>
-              {COPY.newConversation}
-            </Button>
-
-            {overActionLimit ? (
-              <p className="text-xs text-caution">
-                Pick {MAX_ACTION_LEADS} leads or fewer to run an action.
-              </p>
-            ) : overEmailLimit ? (
-              <p className="text-xs text-caution">
-                Drafting outreach is capped at {MAX_EMAIL_LEADS} leads.
-              </p>
-            ) : null}
-          </Card>
+                  {starter}
+                </button>
+              ))}
+            </div>
+          </div>
         ) : null}
 
-        {error ? (
-          <Card className="mt-4 border-critical/30 bg-critical-soft p-4">
-            <p className="text-sm text-critical">{error}</p>
-          </Card>
-        ) : null}
+        {messages.map((message) => (
+          <ChatBubble key={message.id} role={message.role}>
+            <MessageBody
+              message={message}
+              byId={byId}
+              selectedSet={selectedSet}
+              copiedId={copiedId}
+              onToggle={toggleLead}
+              onCopy={copyContact}
+            />
+          </ChatBubble>
+        ))}
 
-        {!loading && hasSearched && !error && results.length === 0 ? (
-          <Card className="mt-4">
-            <EmptyState title={COPY.emptyResults} hint={COPY.emptyResultsHint} />
-          </Card>
+        {thinking ? <ThinkingBubble /> : null}
+        {baseError ? (
+          <p className="text-sm text-critical">{baseError}</p>
         ) : null}
+        <div ref={endRef} />
+      </div>
 
-        {results.length ? (
-          <div className="mt-4 space-y-3">
-            {results.map((lead) => (
+      {/* Composer */}
+      <form
+        onSubmit={handleSubmit}
+        className="sticky bottom-0 mt-6 flex items-center gap-2 border-t border-line bg-canvas/90 py-4 backdrop-blur"
+      >
+        <TextInput
+          value={input}
+          onChange={(event) => setInput(event.target.value)}
+          placeholder={
+            session?.activeLeadIds.length
+              ? "Refine, ask, or say \"draft outreach for the top 3\"…"
+              : COPY.askPlaceholder
+          }
+          aria-label="Message Angie"
+          disabled={!baseLoaded}
+        />
+        <Button type="submit" busy={thinking} disabled={thinking || !input.trim()}>
+          <Send size={16} />
+          <span className="hidden sm:inline">Send</span>
+        </Button>
+      </form>
+    </AppShell>
+  );
+}
+
+/* ----------------------------------------------------- message rendering */
+
+function MessageBody({
+  message,
+  byId,
+  selectedSet,
+  copiedId,
+  onToggle,
+  onCopy,
+}: {
+  message: ChatMessage;
+  byId: Map<string, Lead>;
+  selectedSet: Set<string>;
+  copiedId: string | null;
+  onToggle: (id: string) => void;
+  onCopy: (lead: Lead) => void;
+}) {
+  if (message.kind === "results") {
+    const ids = (message.data as { leadIds: string[] })?.leadIds ?? [];
+    const leads = ids.map((id) => byId.get(id)).filter(Boolean) as Lead[];
+    return (
+      <div>
+        <p>{message.text}</p>
+        {leads.length ? (
+          <div className="mt-3 space-y-3">
+            {leads.map((lead) => (
               <LeadCard
                 key={lead.id}
                 lead={lead}
                 selected={selectedSet.has(lead.id)}
-                onToggle={() => toggleLead(lead.id)}
-                onCopyContact={() => void copyContact(lead)}
+                onToggle={() => onToggle(lead.id)}
+                onCopyContact={() => onCopy(lead)}
                 copied={copiedId === lead.id}
               />
             ))}
           </div>
         ) : null}
       </div>
+    );
+  }
 
-      <div ref={outputRef} className="scroll-mt-6" />
+  if (message.kind === "strategy") {
+    const strategy = (message.data as { strategy: string })?.strategy ?? "";
+    return (
+      <div>
+        <p>{message.text}</p>
+        <div className="mt-3 rounded-2xl border border-line bg-surface p-4">
+          <p className="whitespace-pre-wrap text-sm leading-6 text-muted">{strategy}</p>
+        </div>
+      </div>
+    );
+  }
 
-      {actionError ? (
-        <Card className="mt-6 border-critical/30 bg-critical-soft p-4">
-          <p className="text-sm text-critical">{actionError}</p>
-        </Card>
-      ) : null}
-
-      {output ? (
-        <Card className="mt-6 p-6">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold text-ink">{actionLabels[output.kind]}</h2>
-            <button
-              type="button"
-              onClick={() => setOutput(null)}
-              className="text-xs font-semibold text-muted transition hover:text-ink"
-            >
-              Dismiss
-            </button>
-          </div>
-
-          {output.kind === "call_list" ? (
-            <div className="mt-4">
-              {output.guidance ? (
-                <p className="whitespace-pre-wrap rounded-xl bg-subtle p-4 text-sm leading-6 text-ink">
-                  {output.guidance}
-                </p>
-              ) : null}
-
-              <div className="mt-4 overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-subtle text-left">
-                    <tr className="border-b border-line">
-                      <th className="px-4 py-3 font-semibold text-muted">#</th>
-                      <th className="px-4 py-3 font-semibold text-muted">Business</th>
-                      <th className="px-4 py-3 font-semibold text-muted">Phone</th>
-                      <th className="px-4 py-3 font-semibold text-muted">Location</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {output.leads.map((lead, index) => (
-                      <tr key={lead.leadId} className="border-b border-line last:border-0">
-                        <td className="px-4 py-3 text-faint">{index + 1}</td>
-                        <td className="px-4 py-3 font-medium text-ink">
-                          {lead.businessName || "Unnamed business"}
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-3 text-ink">
-                          {formatPhone(lead.phone)}
-                        </td>
-                        <td className="px-4 py-3 text-ink">
-                          {[lead.city, lead.state].filter(Boolean).join(", ") || "—"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+  if (message.kind === "email") {
+    const emails = (message.data as { emails: DraftedEmail[] })?.emails ?? [];
+    return (
+      <div>
+        <p>{message.text}</p>
+        <div className="mt-3 space-y-3">
+          {emails.map((email) => (
+            <div key={email.leadId} className="rounded-2xl border border-line bg-surface p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-faint">
+                {email.businessName || "Unnamed business"}
+              </p>
+              <p className="mt-1.5 font-semibold text-ink">{email.subject}</p>
+              <p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-muted">
+                {email.body}
+              </p>
             </div>
-          ) : null}
+          ))}
+        </div>
+      </div>
+    );
+  }
 
-          {output.kind === "email" ? (
-            <div className="mt-4 space-y-4">
-              {output.emails.map((email) => (
-                <div key={email.leadId} className="rounded-xl border border-line p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-faint">
-                    {email.businessName || "Unnamed business"}
-                  </p>
-                  <p className="mt-2 font-semibold text-ink">{email.subject}</p>
-                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted">
-                    {email.body}
-                  </p>
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          {output.kind === "strategy" ? (
-            <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-muted">
-              {output.strategy}
-            </p>
-          ) : null}
-        </Card>
-      ) : null}
-    </AppShell>
-  );
+  return <p className="whitespace-pre-wrap">{message.text}</p>;
 }
