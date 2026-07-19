@@ -10,7 +10,9 @@ import {
   FileUp,
   LayoutDashboard,
   LogOut,
+  Menu,
   Users,
+  X,
 } from "lucide-react";
 
 import { auth } from "@/lib/firebase";
@@ -61,6 +63,12 @@ export default function AppShell({
   const [user, setUser] = useState<User | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [authError, setAuthError] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Close the mobile drawer whenever the route changes.
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     let finished = false;
@@ -171,15 +179,62 @@ export default function AppShell({
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-950">
-      <aside className="fixed inset-y-0 left-0 hidden w-64 flex-col bg-slate-950 text-white lg:flex">
-        <div className="border-b border-slate-800 px-6 py-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
+      {/* Mobile top bar — the only nav entry point below lg. */}
+      <div className="sticky top-0 z-30 flex items-center justify-between border-b border-slate-800 bg-slate-950 px-4 py-3 text-white lg:hidden">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">
             Micah Amari
           </p>
 
-          <h1 className="mt-2 text-2xl font-bold">Angie OS</h1>
+          <h1 className="text-lg font-bold leading-tight">Angie OS</h1>
+        </div>
 
-          <p className="mt-1 text-sm text-slate-400">Sales Operations</p>
+        <button
+          type="button"
+          onClick={() => setMenuOpen(true)}
+          aria-label="Open menu"
+          aria-expanded={menuOpen}
+          className="rounded-lg p-2 text-slate-200 transition hover:bg-slate-900 hover:text-white"
+        >
+          <Menu size={24} />
+        </button>
+      </div>
+
+      {/* Backdrop behind the mobile drawer. */}
+      {menuOpen ? (
+        <div
+          className="fixed inset-0 z-40 bg-slate-950/60 lg:hidden"
+          aria-hidden="true"
+          onClick={() => setMenuOpen(false)}
+        />
+      ) : null}
+
+      <aside
+        className={[
+          "fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-slate-950 text-white",
+          "transition-transform duration-200 ease-out lg:translate-x-0",
+          menuOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
+        ].join(" ")}
+      >
+        <div className="flex items-start justify-between border-b border-slate-800 px-6 py-6">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
+              Micah Amari
+            </p>
+
+            <h1 className="mt-2 text-2xl font-bold">Angie OS</h1>
+
+            <p className="mt-1 text-sm text-slate-400">Sales Operations</p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setMenuOpen(false)}
+            aria-label="Close menu"
+            className="-mr-2 rounded-lg p-2 text-slate-300 transition hover:bg-slate-900 hover:text-white lg:hidden"
+          >
+            <X size={22} />
+          </button>
         </div>
 
         <nav className="flex-1 space-y-1 p-4">
@@ -191,6 +246,7 @@ export default function AppShell({
               <Link
                 key={item.href}
                 href={item.href}
+                onClick={() => setMenuOpen(false)}
                 className={[
                   "flex items-center gap-3 rounded-xl px-4 py-3",
                   "text-sm font-medium transition",
