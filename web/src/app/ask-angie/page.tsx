@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { ArrowUpRight, Loader2, Search } from "lucide-react";
 
@@ -210,6 +210,17 @@ export default function AskAngiePage() {
   const [output, setOutput] = useState<AngieOutput | null>(null);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
+  // On mobile the generated output/error renders below the whole results list,
+  // so bring it into view as soon as it appears — otherwise it looks like
+  // nothing happened.
+  const outputRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (output || actionError) {
+      outputRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [output, actionError]);
 
   const allSelected =
     results.length > 0 && results.every((lead) => selectedSet.has(lead.id));
@@ -575,6 +586,9 @@ export default function AskAngiePage() {
           );
         })}
       </section>
+
+      {/* Scroll anchor so generated output/errors are brought into view. */}
+      <div ref={outputRef} className="scroll-mt-6" />
 
       {actionError ? (
         <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
