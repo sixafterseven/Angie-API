@@ -111,6 +111,7 @@ async function main(): Promise<void> {
   const context = buildContext(leads);
 
   const bandCounts: Record<string, number> = {};
+  const geoCounts: Record<string, number> = {};
 
   const db = getFirestore(getAdminApp());
   let batch = db.batch();
@@ -121,6 +122,9 @@ async function main(): Promise<void> {
     const result = scoreLead(lead.data, DEFAULT_SCORING_CONFIG, context.get(lead.id) ?? {});
 
     bandCounts[result.qualificationBand] = (bandCounts[result.qualificationBand] ?? 0) + 1;
+
+    const geoKey = `${result.geographyStatus}${result.marketTier ? ` (${result.marketTier})` : ''}`;
+    geoCounts[geoKey] = (geoCounts[geoKey] ?? 0) + 1;
 
     if (!execute) {
       continue;
@@ -151,6 +155,10 @@ async function main(): Promise<void> {
   console.log('Band distribution:');
   for (const [band, count] of Object.entries(bandCounts).sort()) {
     console.log(`  ${band.padEnd(16)} ${count}`);
+  }
+  console.log('Geography distribution:');
+  for (const [geo, count] of Object.entries(geoCounts).sort()) {
+    console.log(`  ${geo.padEnd(36)} ${count}`);
   }
   console.log('');
 

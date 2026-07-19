@@ -15,6 +15,7 @@ import {
   DEFAULT_SCORING_CONFIG,
   ScoringConfig,
 } from './config';
+import {evaluateGeography} from './geography';
 import {
   LeadInput,
   QualificationBand,
@@ -256,21 +257,17 @@ export function scoreLead(
     needsReview = true;
   }
 
-  // Geography — active only when a target is configured.
-  const geoActive = config.targetGeography.states.length > 0 || config.targetGeography.cities.length > 0 || config.targetGeography.postalPrefixes.length > 0;
-  if (geoActive) {
-    const inState = config.targetGeography.states.map(norm).includes(norm(lead.state));
-    const inCity = config.targetGeography.cities.map(norm).includes(norm(lead.city));
-    const inPostal = config.targetGeography.postalPrefixes.some((p) => norm(lead.postalCode).startsWith(norm(p)));
-    if (has(lead.state) || has(lead.city) || has(lead.postalCode)) {
-      if (!inState && !inCity && !inPostal) {
-        warnings.push('OUTSIDE_TARGET_GEOGRAPHY');
-        reasons.push({code: 'OUT_OF_AREA', text: 'Outside the configured target geography.'});
-        overall = Math.max(0, overall - 15);
-      }
-    } else {
-      warnings.push('GEOGRAPHY_UNKNOWN');
-    }
+  // Geography — target-market enforcement (Atlanta metro / Georgia).
+  // Out of market is suppressed (Poor Fit); missing/ambiguous routes to review.
+  // Raw location fields are read, never modified.
+  const geo = evaluateGeography(lead, config.geography);
+  reasons.push({code: 'GEOGRAPHY', text: geo.geographyReason});
+  if (geo.geographyStatus === 'out_of_market') {
+    warnings.push('OUT_OF_MARKET');
+    forcedBand = 'Poor Fit';
+  } else if (geo.geographyStatus === 'needs_review') {
+    warnings.push('LOCATION_NEEDS_REVIEW');
+    needsReview = true;
   }
 
   // Needs Review overrides the numeric band.
@@ -297,6 +294,9 @@ export function scoreLead(
     validationStatus: lead.validationStatus ?? null,
     state: lead.state ?? null,
     city: lead.city ?? null,
+    postalCode: lead.postalCode ?? null,
+    geographyStatus: geo.geographyStatus,
+    marketTier: geo.marketTier,
     duplicateOf: context.duplicateOf ?? null,
     identifierConflict: Boolean(context.identifierConflict),
     unavailableSignals: UNAVAILABLE_SIGNALS,
@@ -313,6 +313,10 @@ export function scoreLead(
     qualificationReasons: reasons,
     qualificationWarnings: warnings,
     recommendedNextAction: recommendedAction(qualificationBand),
+    geographyStatus: geo.geographyStatus,
+    geographyReason: geo.geographyReason,
+    marketTier: geo.marketTier,
+    isInTargetMarket: geo.isInTargetMarket,
     scoringVersion: config.version,
     scoreInputs,
   };
@@ -338,6 +342,10 @@ export function toLeadScoreFields(result: ScoreResult): Record<string, unknown> 
     qualificationReasons: result.qualificationReasons,
     qualificationWarnings: result.qualificationWarnings,
     recommendedNextAction: result.recommendedNextAction,
+    geographyStatus: result.geographyStatus,
+    geographyReason: result.geographyReason,
+    marketTier: result.marketTier,
+    isInTargetMarket: result.isInTargetMarket,
     scoringVersion: result.scoringVersion,
     scoreInputs: result.scoreInputs,
   };

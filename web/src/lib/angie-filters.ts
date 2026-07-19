@@ -16,6 +16,8 @@ export type AngieFilters = {
   website?: boolean;
   phone?: boolean;
   limit?: number;
+  /** When true, out-of-market leads are NOT excluded from results. */
+  includeOutOfMarket?: boolean;
 };
 
 export type AngieAction = "call_list" | "email" | "strategy";
@@ -28,6 +30,7 @@ const ALLOWED_FILTER_KEYS = [
   "website",
   "phone",
   "limit",
+  "includeOutOfMarket",
 ] as const;
 
 export const MAX_QUESTION_LENGTH = 500;
@@ -239,7 +242,7 @@ export function parseAngieFilters(rawText: string): AngieFilters {
       continue;
     }
 
-    if (key === "website" || key === "phone") {
+    if (key === "website" || key === "phone" || key === "includeOutOfMarket") {
       const flag = sanitizeBoolean(value);
 
       if (flag !== undefined) {

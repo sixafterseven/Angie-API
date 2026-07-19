@@ -240,12 +240,16 @@ Return ONLY JSON. No commentary, no markdown fences.
 
 Allowed fields (omit any field the user did not ask for):
 
-industry  string  - the kind of business, e.g. "dentist"
-city      string  - a city name, e.g. "atlanta"
-state     string  - a two-letter US state code, e.g. "ga"
-website   boolean - true means has a website, false means has none
-phone     boolean - true means has a phone, false means has none
-limit     number  - how many leads the user asked for, 1 to 100
+industry           string  - the kind of business, e.g. "dentist"
+city               string  - a city name, e.g. "atlanta"
+state              string  - a two-letter US state code, e.g. "ga"
+website            boolean - true means has a website, false means has none
+phone              boolean - true means has a phone, false means has none
+limit              number  - how many leads the user asked for, 1 to 100
+includeOutOfMarket boolean - true ONLY when the user explicitly wants leads
+                             outside the target market (out-of-market /
+                             suppressed). Out-of-market leads are hidden by
+                             default, so omit this field otherwise.
 
 Examples:
 
@@ -257,6 +261,9 @@ User: Businesses without websites
 
 User: Give me 20 leads in Georgia
 {"state":"ga","limit":20}
+
+User: Include out-of-market leads too
+{"includeOutOfMarket":true}
 
 User request:
 

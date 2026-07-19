@@ -28,6 +28,8 @@ type Lead = {
   category?: string;
   rating?: number;
   reviewCount?: number;
+  geographyStatus?: string;
+  isInTargetMarket?: boolean;
 };
 
 type CallListLead = {
@@ -134,6 +136,11 @@ function matchesFilters(lead: Lead, filters: AngieFilters): boolean {
   }
 
   if (filters.phone === false && Boolean(lead.phone)) {
+    return false;
+  }
+
+  // Suppressed / out-of-market leads are hidden unless explicitly requested.
+  if (!filters.includeOutOfMarket && lead.geographyStatus === "out_of_market") {
     return false;
   }
 
