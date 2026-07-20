@@ -605,7 +605,7 @@ function parseStrategy(rawText: string): StrategyOutput {
           .slice(0, max)
       : [];
 
-  return {
+  const result: StrategyOutput = {
     opportunitySnapshot: sanitizeGenerated(parsed.opportunitySnapshot, 600),
     fixFirst: list(parsed.fixFirst, 5),
     whyItMatters: sanitizeGenerated(parsed.whyItMatters, 600),
@@ -614,6 +614,22 @@ function parseStrategy(rawText: string): StrategyOutput {
     watchOuts: list(parsed.watchOuts, 3),
     nextStep: sanitizeGenerated(parsed.nextStep, 300),
   };
+
+  // Fallback: if the model returned prose instead of JSON, don't render an empty
+  // card — surface the cleaned text as the snapshot so there is always content.
+  const empty =
+    !result.opportunitySnapshot &&
+    !result.fixFirst.length &&
+    !result.whyItMatters &&
+    !result.recommendedOffer &&
+    !result.conversationStarter &&
+    !result.watchOuts.length &&
+    !result.nextStep;
+  if (empty) {
+    result.opportunitySnapshot = sanitizeGenerated(withoutFences || rawText, 900);
+  }
+
+  return result;
 }
 
 type DraftedEmail = {
