@@ -27,7 +27,10 @@ service cloud.firestore {
     function employeeEmails() {
       return [
         'jason@micahamari.com',
-        'admin7@sixafterseven.com'
+        'admin7@sixafterseven.com',
+        'kris@micahamari.com',
+        'alexa@micahamari.com',
+        'oreonna@micahamari.com'
       ];
     }
 
