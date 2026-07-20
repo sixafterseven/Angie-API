@@ -7,7 +7,8 @@ import { RotateCcw, Save, Send } from "lucide-react";
 import AppShell from "@/components/app-shell";
 import { LeadCard } from "@/components/lead-card";
 import { ChatBubble, ThinkingBubble } from "@/components/chat";
-import { StrategyCard, Strategy } from "@/components/strategy-card";
+import { StrategyCard, Strategy, StrategyAction } from "@/components/strategy-card";
+import { ComparisonCard, Comparison } from "@/components/comparison-card";
 import {
   OutreachCard,
   DraftedEmail,
@@ -269,24 +270,57 @@ export default function AskAngiePage() {
     pushMessage(resultsMessage(next, "Dropped that filter —"));
   }
 
-  async function runStrategy(ids: string[]) {
-    const { strategy } = (await callAngie({ action: "strategy", leadIds: ids })) as {
-      strategy: Strategy;
-    };
-    pushMessage(makeMessage("angie", "Here's the game plan.", "strategy", { strategy }));
+  async function runStrategy(ids: string[], depth?: string, focus?: string) {
+    const { strategy } = (await callAngie({
+      action: "strategy",
+      leadIds: ids,
+      depth: depth ?? "",
+      focus: focus ?? "",
+    })) as { strategy: Strategy };
+    const note =
+      depth === "thirty_day"
+        ? "Here's a 30-day plan."
+        : focus
+          ? "Reworked it —"
+          : "Here's the opportunity plan.";
+    pushMessage(makeMessage("angie", note, "strategy", { strategy, leadIds: ids }));
     setSession((c) => (c ? { ...c, lastGeneratedStrategy: JSON.stringify(strategy) } : c));
   }
 
-  async function runOutreach(ids: string[]) {
-    const { emails } = (await callAngie({ action: "email", leadIds: ids })) as {
-      emails: DraftedEmail[];
+  async function runComparison(ids: string[]) {
+    const { comparison } = (await callAngie({ action: "comparison", leadIds: ids })) as {
+      comparison: Comparison;
     };
+    pushMessage(makeMessage("angie", "Here's how they stack up.", "comparison", { comparison }));
+  }
+
+  async function runOutreach(ids: string[], channel?: string) {
+    const { emails } = (await callAngie({
+      action: "email",
+      leadIds: ids,
+      channel: channel ?? "",
+    })) as { emails: DraftedEmail[] };
     pushMessage(
       makeMessage("angie", "Drafted these — edit or fine-tune the tone.", "email", {
         emails: emails ?? [],
       }),
     );
     setSession((c) => (c ? { ...c, lastGeneratedOutreach: emails } : c));
+  }
+
+  /** Follow-up action from a strategy card (re-run with focus/depth, or email). */
+  async function strategyCardAction(leadIds: string[], action: StrategyAction) {
+    if (thinking || !leadIds.length) return;
+    setThinking(true);
+    try {
+      if (action.kind === "email") await runOutreach(leadIds);
+      else if (action.kind === "depth") await runStrategy(leadIds, action.value);
+      else await runStrategy(leadIds, undefined, action.value);
+    } catch (caughtError) {
+      pushMessage(makeMessage("angie", caughtError instanceof Error ? caughtError.message : COPY.genericError));
+    } finally {
+      setThinking(false);
+    }
   }
 
   /** Per-card action: run strategy/outreach for a single lead. */
@@ -348,7 +382,7 @@ export default function AskAngiePage() {
     const hasResults = state.activeLeadIds.length > 0;
 
     try {
-      const { intent, filters, reply } = (await callAngie({
+      const { intent, filters, reply, depth, focus, channel } = (await callAngie({
         action: "converse",
         message,
         context: {
@@ -357,9 +391,37 @@ export default function AskAngiePage() {
           selectedCount: state.selectedLeadIds.length,
           resultCount: state.activeLeadIds.length,
         },
-      })) as { intent: AngieIntent; filters: AngieFilters; reply: string };
+      })) as {
+        intent: AngieIntent;
+        filters: AngieFilters;
+        reply: string;
+        depth?: string;
+        focus?: string;
+        channel?: string;
+      };
 
       if (reply) pushMessage(makeMessage("angie", reply));
+
+      // Strategy-family intents all resolve to an opportunity plan (with a focus
+      // or depth pulled from the classifier).
+      const STRATEGY_INTENTS: AngieIntent[] = [
+        "strategy",
+        "opportunity_strategy",
+        "service_match",
+        "channel_plan",
+        "campaign_ideas",
+        "follow_up_plan",
+      ];
+      const intentFocus =
+        focus ||
+        (intent === "service_match"
+          ? ""
+          : intent === "channel_plan"
+            ? ""
+            : intent === "campaign_ideas"
+              ? "creative"
+              : "");
+      const intentDepth = depth || (intent === "follow_up_plan" ? "thirty_day" : "");
 
       if (intent === "new_search" || (intent === "refine" && !hasResults)) {
         const next = computeSearch(baseLeads, state, filters ?? {}, nowMs(), "new_search");
@@ -370,7 +432,7 @@ export default function AskAngiePage() {
         const next = computeSearch(baseLeads, state, merged, nowMs(), "refine");
         setSession(next);
         pushMessage(resultsMessage(next, "Refined —"));
-      } else if (intent === "lead_question") {
+      } else if (intent === "lead_question" || intent === "research_request") {
         const ids = actionLeadIds(state, MAX_ACTION_LEADS);
         if (!ids.length) {
           pushMessage(makeMessage("angie", "Pull up some leads first and I'll dig in."));
@@ -380,14 +442,18 @@ export default function AskAngiePage() {
           };
           pushMessage(makeMessage("angie", answer || "I don't have that detail on file."));
         }
-      } else if (intent === "strategy") {
+      } else if (STRATEGY_INTENTS.includes(intent)) {
         const ids = actionLeadIds(state, MAX_ACTION_LEADS);
         if (!ids.length) pushMessage(makeMessage("angie", "Give me a list first and I'll build a plan."));
-        else await runStrategy(ids);
+        else await runStrategy(ids, intentDepth || undefined, intentFocus || undefined);
+      } else if (intent === "lead_comparison") {
+        const ids = actionLeadIds(state, MAX_ACTION_LEADS);
+        if (ids.length < 2) pushMessage(makeMessage("angie", "Give me at least two leads to compare."));
+        else await runComparison(ids);
       } else if (intent === "outreach") {
         const ids = actionLeadIds(state, MAX_EMAIL_LEADS);
         if (!ids.length) pushMessage(makeMessage("angie", "Point me at some leads and I'll draft outreach."));
-        else await runOutreach(ids);
+        else await runOutreach(ids, channel);
       } else if (intent === "export") {
         if (!activeLeads.length) pushMessage(makeMessage("angie", "Nothing to export yet — search first."));
         else pushMessage(makeMessage("angie", "Use “Download this list” above to grab a CSV or Excel file."));
@@ -539,7 +605,9 @@ export default function AskAngiePage() {
                 <MessageBody
                   message={message}
                   regenBusy={regenBusy}
+                  thinking={thinking}
                   onRegenerate={regenerateEmail}
+                  onStrategyAction={strategyCardAction}
                 />
               </ChatBubble>
             ))}
@@ -590,11 +658,15 @@ export default function AskAngiePage() {
 function MessageBody({
   message,
   regenBusy,
+  thinking,
   onRegenerate,
+  onStrategyAction,
 }: {
   message: ChatMessage;
   regenBusy: string[];
+  thinking: boolean;
   onRegenerate: (messageId: string, leadId: string, modifier: OutreachModifier) => void;
+  onStrategyAction: (leadIds: string[], action: StrategyAction) => void;
 }) {
   // Result cards live in the left results panel now; in the chat, a results turn
   // is just Angie's narration ("Here's what I found — 12 leads…").
@@ -603,13 +675,33 @@ function MessageBody({
   }
 
   if (message.kind === "strategy") {
-    const strategy = (message.data as { strategy: Strategy })?.strategy;
+    const data = message.data as { strategy: Strategy; leadIds?: string[] };
+    const strategy = data?.strategy;
+    const leadIds = data?.leadIds ?? [];
     return (
       <div>
         <p>{message.text}</p>
         {strategy ? (
           <div className="mt-3">
-            <StrategyCard strategy={strategy} />
+            <StrategyCard
+              strategy={strategy}
+              busy={thinking}
+              onAction={(action) => onStrategyAction(leadIds, action)}
+            />
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (message.kind === "comparison") {
+    const comparison = (message.data as { comparison: Comparison })?.comparison;
+    return (
+      <div>
+        <p>{message.text}</p>
+        {comparison ? (
+          <div className="mt-3">
+            <ComparisonCard comparison={comparison} />
           </div>
         ) : null}
       </div>

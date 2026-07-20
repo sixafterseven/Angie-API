@@ -10,6 +10,8 @@ import {
   parseAngieFilters,
   sanitizeLeadIds,
 } from "@/lib/angie-filters";
+import { matchServices, ServiceMatch } from "@/lib/service-match";
+import { playbookForCategory, IndustryPlaybook } from "@/lib/industry-playbooks";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +25,7 @@ type GroundedLead = {
   leadId: string;
   businessName: string;
   emailGreetingName: string;
+  email: string;
   phone: string;
   website: string;
   city: string;
@@ -98,6 +101,7 @@ async function loadSalesReadyLeads(leadIds: string[]): Promise<GroundedLead[]> {
         readString(data.companyName) ||
         readString(data.name),
       emailGreetingName: readString(data.emailGreetingName),
+      email: readString(data.email),
       phone: readString(data.phone),
       website: readString(data.website),
       city: readString(data.city),
@@ -200,6 +204,84 @@ const GROUNDING_RULES = [
   "If a fact is missing, say it is missing rather than guessing.",
 ].join("\n");
 
+/**
+ * Sales-useful facts for strategy — deliberately EXCLUDES internal qualification
+ * and completeness scores. Those are for our own triage; they must never drive
+ * or appear in prospect-facing strategy or outreach. Data gaps are expressed as
+ * salesperson actions instead.
+ */
+function buildSalesFacts(leads: GroundedLead[]): string {
+  return leads
+    .map((lead) => {
+      const parts = [`business: ${lead.businessName || "unknown"}`];
+      if (lead.category) parts.push(`type: ${lead.category}`);
+      if (lead.city || lead.state) {
+        parts.push(`location: ${[lead.city, lead.state].filter(Boolean).join(", ")}`);
+      }
+      parts.push(`website: ${lead.website ? "on file" : "none on file"}`);
+      parts.push(`phone: ${lead.phone ? "on file" : "none on file"}`);
+      parts.push(`email: ${lead.email ? "on file" : "none on file"}`);
+      if (lead.rating !== null) parts.push(`rating: ${lead.rating}`);
+      if (lead.reviewCount !== null) parts.push(`reviews: ${lead.reviewCount}`);
+      return `- ${parts.join(" | ")}`;
+    })
+    .join("\n");
+}
+
+/** Renders the deterministic service matches + playbook as grounded input. */
+function buildStrategyInputs(
+  matches: ServiceMatch[],
+  playbook: IndustryPlaybook | null,
+): string {
+  const lines: string[] = [];
+  if (matches.length) {
+    lines.push("Ranked service matches (from our catalog, based on stored signals):");
+    matches.forEach((m) => {
+      lines.push(`- ${m.name}${m.reasons.length ? ` — ${m.reasons.join("; ")}` : ""}`);
+    });
+  }
+  if (playbook) {
+    lines.push(`\nIndustry playbook: ${playbook.label}`);
+    lines.push(`- common goals: ${playbook.commonGoals.join(", ")}`);
+    lines.push(`- high-value services: ${playbook.highValueServices.join(", ")}`);
+    lines.push(`- organic content themes: ${playbook.organicContentThemes.join(", ")}`);
+    lines.push(`- paid campaign ideas: ${playbook.paidCampaignIdeas.join(", ")}`);
+    lines.push(`- lead-gen ideas: ${playbook.leadGenIdeas.join(", ")}`);
+    lines.push(`- evidence needed before specifics: ${playbook.evidenceNeeded.join(", ")}`);
+  }
+  return lines.join("\n") || "(no catalog match — reason from the business type)";
+}
+
+/** Micah Amari service catalog + playbooks are the grounded strategy inputs. */
+const STRATEGY_DEPTHS = ["quick", "full", "campaign", "thirty_day"] as const;
+type StrategyDepth = (typeof STRATEGY_DEPTHS)[number];
+
+function strategyDepth(value: string): StrategyDepth {
+  return (STRATEGY_DEPTHS as readonly string[]).includes(value)
+    ? (value as StrategyDepth)
+    : "full";
+}
+
+/** Turns a focus modifier code into a one-line instruction. */
+function strategyFocus(focus: string): string {
+  switch (focus) {
+    case "organic_social":
+      return "Focus the plan on organic social media.";
+    case "paid_ads":
+      return "Focus the plan on paid advertising (paid social / Google Ads).";
+    case "website":
+      return "Focus the plan on website / landing pages / conversion.";
+    case "creative":
+      return "Make the campaign ideas more creative and memorable.";
+    case "cheaper":
+      return "Frame a lean, lower-cost starter offer.";
+    case "pitch":
+      return "Frame it as a short pitch a salesperson could deliver.";
+    default:
+      return focus ? `Emphasis: ${focus}.` : "";
+  }
+}
+
 /** Shared Micah Amari voice, reused by strategy + outreach generation. */
 const VOICE_RULES = [
   "Voice: relaxed, smart, warm, lightly witty, confident but never corporate.",
@@ -291,6 +373,13 @@ const CONVERSE_INTENTS = [
   "refine",
   "lead_question",
   "strategy",
+  "opportunity_strategy",
+  "service_match",
+  "channel_plan",
+  "campaign_ideas",
+  "follow_up_plan",
+  "lead_comparison",
+  "research_request",
   "outreach",
   "export",
   "smalltalk",
@@ -328,16 +417,28 @@ async function handleConverse(body: Record<string, unknown>) {
 You are Angie, a warm, sharp sales assistant for Micah Amari. Classify the
 user's latest message into one intent and return ONLY JSON (no markdown fences):
 
-{"intent": "...", "filters": { ... }, "reply": "..."}
+{"intent": "...", "filters": { ... }, "reply": "...", "depth": "...", "focus": "...", "channel": "..."}
 
 Intents:
-- new_search   : the user wants a fresh set of leads (a new industry/place/criteria, or "start over")
+- new_search   : a fresh set of leads (a new industry/place/criteria, or "start over")
 - refine       : narrow, sort, or limit the CURRENT set (city/rating/sort/limit/no-website/no-chains/add-phone)
 - lead_question: a question about a specific lead or why one ranks where it does
-- strategy     : wants a sales strategy / game plan for the current or selected leads
-- outreach     : wants outreach emails drafted for the current or selected leads
-- export       : wants to download / export the list
+- strategy / opportunity_strategy : a marketing opportunity plan for the current or selected leads
+- service_match : which Micah Amari services fit these leads
+- channel_plan  : which marketing channels fit (organic social, paid ads, website, email…)
+- campaign_ideas: specific campaign concepts
+- follow_up_plan: follow-up / nurture messaging or a 30-day plan
+- lead_comparison: compare two or more leads as opportunities
+- research_request: what to research/verify before contacting
+- outreach     : draft outreach (email or another channel) for the current/selected leads
+- export       : download / export the list
 - smalltalk    : greeting or unclear
+
+For strategy-family intents, optionally set:
+- "depth": "quick" | "full" | "campaign" | "thirty_day"  (thirty_day for "30-day plan")
+- "focus": "organic_social" | "paid_ads" | "website" | "creative" | "cheaper" | "pitch"
+For outreach, optionally set "channel": "email" | "linkedin" | "instagram" | "facebook" |
+  "call_opener" | "voicemail" | "mailed_note" | "video_audit" | "proposal" | "campaign_teaser" | "follow_up"
 
 For new_search and refine, put any of these validated filter fields in "filters"
 (omit the rest). For refine, include ONLY the fields that change:
@@ -379,8 +480,11 @@ ${message}
 
   const filters = parseAngieFilters(JSON.stringify(parsed.filters ?? {}));
   const reply = sanitizeGenerated(parsed.reply, 400);
+  const depth = sanitizeGenerated(parsed.depth, 20);
+  const focus = sanitizeGenerated(parsed.focus, 30);
+  const channel = sanitizeGenerated(parsed.channel, 30);
 
-  return NextResponse.json({ intent, filters, reply });
+  return NextResponse.json({ intent, filters, reply, depth, focus, channel });
 }
 
 /**
@@ -483,55 +587,117 @@ ${facts}
   }
 
   if (action === "strategy") {
+    const depth = strategyDepth(readString(body.depth));
+    const focus = readString(body.focus);
+    const primary = leads[0];
+    const playbook = playbookForCategory(primary.category);
+    const matches = matchServices(
+      {
+        category: primary.category,
+        website: primary.website,
+        rating: primary.rating ?? undefined,
+        reviewCount: primary.reviewCount ?? undefined,
+        phone: primary.phone,
+      },
+      playbook,
+    );
+    const inputs = buildStrategyInputs(matches, playbook);
+
+    const depthNote =
+      depth === "quick"
+        ? "QUICK TAKE: keep it brief — snapshot, top 1-2 service matches, one next step; other arrays may be short or empty."
+        : depth === "thirty_day"
+          ? "30-DAY PLAN: also fill thirtyDayPlan with 4 weekly entries (week, focus)."
+          : depth === "campaign"
+            ? "CAMPAIGN PLAN: go deeper on campaignIdeas (3-4), lighter elsewhere."
+            : "FULL STRATEGY: fill every section.";
+
     const rawText = await generateText(`
-You are Angie, a sales assistant for Micah Amari.
+You are Angie, a marketing strategist and sales assistant for Micah Amari.
 
 ${GROUNDING_RULES}
 ${VOICE_RULES}
+${depthNote}
+${strategyFocus(focus)}
 
-Write a practical sales playbook for this set of leads as ONE JSON object of
-this exact shape (no markdown fences):
+Build a practical marketing OPPORTUNITY plan (not just a call recommendation).
+Separate what is KNOWN from what is a PROPOSED idea from what NEEDS RESEARCH.
+Never state an assumption as a fact. You have NOT reviewed their website, ads,
+or social — so never diagnose those; frame them as worth reviewing. Do NOT
+mention internal qualification or data-completeness scores; translate any data
+gaps into salesperson actions (e.g. "confirm the best decision-maker").
 
+Return ONE JSON object of this exact shape (no markdown fences):
 {
-  "opportunitySnapshot": "2-3 sentences: what stands out about these leads",
-  "fixFirst": ["3-5 short, concrete priorities"],
-  "whyItMatters": "2-3 sentences in plain English tied to these businesses",
-  "recommendedOffer": "the most relevant Micah Amari service/package, 1-2 sentences",
-  "conversationStarter": "one natural opening line a salesperson could use",
-  "watchOuts": ["1-3 things uncertain, missing, or worth verifying"],
-  "nextStep": "one concrete next action"
+  "opportunitySnapshot": "why this business may be worth pursuing (2-3 sentences)",
+  "whatWeKnow": ["only grounded facts from the lead data below"],
+  "serviceMatches": [{"name":"Micah Amari service","why":"why it may fit"}],
+  "marketingOpportunities": ["practical areas worth exploring — organic social, paid ads, website, email, branding, content, reviews, referral"],
+  "campaignIdeas": [{"name":"...","concept":"...","audience":"...","channel":"...","goal":"...","deliverables":["..."]}],
+  "outreachApproach": {"channel":"phone|email|LinkedIn|Instagram|Facebook|mailed note|video audit|custom mockup","reasoning":"why that channel"},
+  "conversationStarter": "a natural, low-pressure opener",
+  "researchNext": ["what to verify before a stronger recommendation"],
+  "nextStep": "one practical action for the salesperson",
+  "thirtyDayPlan": [{"week":"Week 1","focus":"..."}]
 }
+Prefer the ranked service matches and playbook ideas below; explain why each fits.
 
-Ground every claim in the facts. Keep it specific, not generic.
+Grounded strategy inputs:
+${inputs}
 
 Lead facts:
-${facts}
+${buildSalesFacts(leads)}
 `);
 
-    return NextResponse.json({ action, strategy: parseStrategy(rawText) });
+    return NextResponse.json({ action, strategy: parseStrategy(rawText, depth) });
   }
 
-  // Draft one email per selected lead, keyed by leadId so each draft can be
+  if (action === "comparison") {
+    const rawText = await generateText(`
+You are Angie, a marketing strategist for Micah Amari.
+
+${GROUNDING_RULES}
+${VOICE_RULES}
+Do not surface internal qualification/completeness scores.
+
+Compare these leads as marketing opportunities. Return ONE JSON object
+(no markdown fences):
+{
+  "rows": [{"name":"...","serviceFit":"...","likelyValue":"...","outreachDifficulty":"...","campaignPotential":"...","evidence":"what we'd still verify","priority":"high|medium|low"}],
+  "recommendation": "which to prioritize and why (2-3 sentences)"
+}
+
+Lead facts:
+${buildSalesFacts(leads)}
+`);
+
+    return NextResponse.json({ action, comparison: parseComparison(rawText) });
+  }
+
+  // Draft one message per selected lead, keyed by leadId so each draft can be
   // tied back to a real Firestore record. An optional modifier adjusts tone or
-  // focus without inventing new observations.
+  // focus, and channel picks the format — without inventing new observations.
+  const channel = channelInstruction(readString(body.channel));
   const rawText = await generateText(`
 You are Angie, a sales assistant for Micah Amari.
 
 ${GROUNDING_RULES}
 ${VOICE_RULES}
 ${modifierInstruction(readString(body.modifier))}
+${channel.instruction}
 
-Draft one short outreach email for EACH lead below. Address the recipient by
-their greeting name when given, otherwise the business name. Keep each body
-under 120 words: warm, concise, observant, low-pressure, human — not pushy, no
-long intro, no jargon. When website quality is unknown, frame it as an
-invitation to review opportunities, not a diagnosis.
+Draft one ${channel.label} for EACH lead below. Address the recipient by their
+greeting name when given, otherwise the business name. Keep it short: warm,
+concise, observant, low-pressure, human — not pushy, no long intro, no jargon.
+When website quality is unknown, frame it as an invitation to review
+opportunities, not a diagnosis. Never mention internal scores.
 
 Return ONLY a JSON object of this exact shape, no markdown fences:
 
 {"emails":[{"leadId":"...","subject":"...","previewText":"...","body":"...","cta":"...","toneLabel":"..."}]}
 
-- previewText: a short inbox preview line (under 90 chars)
+- subject: a subject line for email, otherwise a short label for the ${channel.label}
+- previewText: a short preview line (under 90 chars)
 - cta: the low-pressure next step
 - toneLabel: 1-3 words describing the tone (e.g. "Warm & direct")
 Use the leadId values exactly as given. Include every lead exactly once.
@@ -553,6 +719,34 @@ ${facts}
 }
 
 /** Turns a tone/focus modifier code into a one-line instruction. */
+/** Picks the outreach channel format. Defaults to a cold email. */
+function channelInstruction(channel: string): { label: string; instruction: string } {
+  switch (channel) {
+    case "linkedin":
+      return { label: "LinkedIn message", instruction: "Format: a brief LinkedIn connection message." };
+    case "instagram":
+      return { label: "Instagram DM", instruction: "Format: a casual, respectful Instagram DM." };
+    case "facebook":
+      return { label: "Facebook message", instruction: "Format: a friendly Facebook page message." };
+    case "call_opener":
+      return { label: "call opener", instruction: "Format: a 2-3 sentence phone opener a rep can say." };
+    case "voicemail":
+      return { label: "voicemail script", instruction: "Format: a short, natural voicemail script." };
+    case "mailed_note":
+      return { label: "mailed note", instruction: "Format: a short hand-written-style mailed note." };
+    case "video_audit":
+      return { label: "video-audit script", instruction: "Format: a short script for a friendly video audit (no fake findings — invite a look)." };
+    case "proposal":
+      return { label: "proposal introduction", instruction: "Format: a warm proposal intro paragraph." };
+    case "campaign_teaser":
+      return { label: "campaign teaser", instruction: "Format: a one-idea campaign teaser." };
+    case "follow_up":
+      return { label: "follow-up email", instruction: "Format: a light follow-up assuming a prior touch." };
+    default:
+      return { label: "outreach email", instruction: "" };
+  }
+}
+
 function modifierInstruction(modifier: string): string {
   switch (modifier) {
     case "warmer":
@@ -573,63 +767,145 @@ function modifierInstruction(modifier: string): string {
 }
 
 type StrategyOutput = {
+  depth: string;
   opportunitySnapshot: string;
-  fixFirst: string[];
-  whyItMatters: string;
-  recommendedOffer: string;
+  whatWeKnow: string[];
+  serviceMatches: Array<{ name: string; why: string }>;
+  marketingOpportunities: string[];
+  campaignIdeas: Array<{
+    name: string;
+    concept: string;
+    audience: string;
+    channel: string;
+    goal: string;
+    deliverables: string[];
+  }>;
+  outreachApproach: { channel: string; reasoning: string };
   conversationStarter: string;
-  watchOuts: string[];
+  researchNext: string[];
   nextStep: string;
+  thirtyDayPlan: Array<{ week: string; focus: string }>;
 };
 
-/** Validates the model's strategy JSON into safe, bounded fields. */
-function parseStrategy(rawText: string): StrategyOutput {
-  const withoutFences = rawText.replace(/\`\`\`(?:json)?/gi, "").trim();
-  const start = withoutFences.indexOf("{");
-  const end = withoutFences.lastIndexOf("}");
-
-  let parsed: Record<string, unknown> = {};
+function extractJsonObject(rawText: string): { parsed: Record<string, unknown>; clean: string } {
+  const clean = rawText.replace(/\`\`\`(?:json)?/gi, "").trim();
+  const start = clean.indexOf("{");
+  const end = clean.lastIndexOf("}");
   if (start >= 0 && end > start) {
     try {
-      parsed = JSON.parse(withoutFences.slice(start, end + 1));
+      return { parsed: JSON.parse(clean.slice(start, end + 1)), clean };
     } catch {
-      parsed = {};
+      return { parsed: {}, clean };
     }
   }
+  return { parsed: {}, clean };
+}
 
-  const list = (value: unknown, max: number): string[] =>
-    Array.isArray(value)
-      ? value
-          .map((v) => sanitizeGenerated(v, 240))
-          .filter(Boolean)
-          .slice(0, max)
-      : [];
+const strList = (value: unknown, max: number): string[] =>
+  Array.isArray(value)
+    ? value.map((v) => sanitizeGenerated(v, 240)).filter(Boolean).slice(0, max)
+    : [];
+
+/** Validates the model's strategy JSON into safe, bounded fields. */
+function parseStrategy(rawText: string, depth: string): StrategyOutput {
+  const { parsed, clean } = extractJsonObject(rawText);
+
+  const serviceMatches = Array.isArray(parsed.serviceMatches)
+    ? parsed.serviceMatches
+        .map((m) => {
+          const o = (m ?? {}) as Record<string, unknown>;
+          return { name: sanitizeGenerated(o.name, 80), why: sanitizeGenerated(o.why, 240) };
+        })
+        .filter((m) => m.name)
+        .slice(0, 5)
+    : [];
+
+  const campaignIdeas = Array.isArray(parsed.campaignIdeas)
+    ? parsed.campaignIdeas
+        .map((c) => {
+          const o = (c ?? {}) as Record<string, unknown>;
+          return {
+            name: sanitizeGenerated(o.name, 90),
+            concept: sanitizeGenerated(o.concept, 300),
+            audience: sanitizeGenerated(o.audience, 160),
+            channel: sanitizeGenerated(o.channel, 80),
+            goal: sanitizeGenerated(o.goal, 160),
+            deliverables: strList(o.deliverables, 5),
+          };
+        })
+        .filter((c) => c.name)
+        .slice(0, 4)
+    : [];
+
+  const outreach = (parsed.outreachApproach ?? {}) as Record<string, unknown>;
+  const thirtyDayPlan = Array.isArray(parsed.thirtyDayPlan)
+    ? parsed.thirtyDayPlan
+        .map((w) => {
+          const o = (w ?? {}) as Record<string, unknown>;
+          return { week: sanitizeGenerated(o.week, 40), focus: sanitizeGenerated(o.focus, 240) };
+        })
+        .filter((w) => w.week || w.focus)
+        .slice(0, 6)
+    : [];
 
   const result: StrategyOutput = {
+    depth,
     opportunitySnapshot: sanitizeGenerated(parsed.opportunitySnapshot, 600),
-    fixFirst: list(parsed.fixFirst, 5),
-    whyItMatters: sanitizeGenerated(parsed.whyItMatters, 600),
-    recommendedOffer: sanitizeGenerated(parsed.recommendedOffer, 400),
+    whatWeKnow: strList(parsed.whatWeKnow, 6),
+    serviceMatches,
+    marketingOpportunities: strList(parsed.marketingOpportunities, 8),
+    campaignIdeas,
+    outreachApproach: {
+      channel: sanitizeGenerated(outreach.channel, 40),
+      reasoning: sanitizeGenerated(outreach.reasoning, 300),
+    },
     conversationStarter: sanitizeGenerated(parsed.conversationStarter, 400),
-    watchOuts: list(parsed.watchOuts, 3),
+    researchNext: strList(parsed.researchNext, 6),
     nextStep: sanitizeGenerated(parsed.nextStep, 300),
+    thirtyDayPlan,
   };
 
-  // Fallback: if the model returned prose instead of JSON, don't render an empty
-  // card — surface the cleaned text as the snapshot so there is always content.
-  const empty =
-    !result.opportunitySnapshot &&
-    !result.fixFirst.length &&
-    !result.whyItMatters &&
-    !result.recommendedOffer &&
-    !result.conversationStarter &&
-    !result.watchOuts.length &&
-    !result.nextStep;
-  if (empty) {
-    result.opportunitySnapshot = sanitizeGenerated(withoutFences || rawText, 900);
+  // Fallback: if the model returned prose instead of JSON, never render empty.
+  if (!result.opportunitySnapshot && !result.serviceMatches.length && !result.marketingOpportunities.length) {
+    result.opportunitySnapshot = sanitizeGenerated(clean || rawText, 900);
   }
 
   return result;
+}
+
+type ComparisonOutput = {
+  rows: Array<{
+    name: string;
+    serviceFit: string;
+    likelyValue: string;
+    outreachDifficulty: string;
+    campaignPotential: string;
+    evidence: string;
+    priority: string;
+  }>;
+  recommendation: string;
+};
+
+function parseComparison(rawText: string): ComparisonOutput {
+  const { parsed } = extractJsonObject(rawText);
+  const rows = Array.isArray(parsed.rows)
+    ? parsed.rows
+        .map((r) => {
+          const o = (r ?? {}) as Record<string, unknown>;
+          return {
+            name: sanitizeGenerated(o.name, 80),
+            serviceFit: sanitizeGenerated(o.serviceFit, 160),
+            likelyValue: sanitizeGenerated(o.likelyValue, 120),
+            outreachDifficulty: sanitizeGenerated(o.outreachDifficulty, 120),
+            campaignPotential: sanitizeGenerated(o.campaignPotential, 160),
+            evidence: sanitizeGenerated(o.evidence, 200),
+            priority: sanitizeGenerated(o.priority, 20),
+          };
+        })
+        .filter((r) => r.name)
+        .slice(0, 6)
+    : [];
+  return { rows, recommendation: sanitizeGenerated(parsed.recommendation, 500) };
 }
 
 type DraftedEmail = {
@@ -746,7 +1022,12 @@ export async function POST(request: Request) {
       return await handleAnswer(payload);
     }
 
-    if (action === "call_list" || action === "email" || action === "strategy") {
+    if (
+      action === "call_list" ||
+      action === "email" ||
+      action === "strategy" ||
+      action === "comparison"
+    ) {
       return await handleAction(action, payload);
     }
 
