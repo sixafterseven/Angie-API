@@ -224,6 +224,17 @@ export default function AskAngiePage() {
     });
   }
 
+  function toggleAll() {
+    if (!session) return;
+    const allSelected =
+      activeLeads.length > 0 && activeLeads.every((lead) => selectedSet.has(lead.id));
+    setSession({
+      ...session,
+      selectedLeadIds: allSelected ? [] : activeLeads.map((lead) => lead.id),
+      updatedAt: nowMs(),
+    });
+  }
+
   async function copyContact(lead: Lead) {
     try {
       await navigator.clipboard.writeText(contactBlock(lead));
@@ -396,105 +407,148 @@ export default function AskAngiePage() {
   const chips = session ? filterChips(session.activeFilters) : [];
   const hasActive = (session?.activeLeadIds.length ?? 0) > 0;
 
-  return (
-    <AppShell title="Ask Angie" description="Chat your way to the right leads.">
-      {/* Context bar: filters, export, save, reset */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        {chips.length ? (
-          <>
-            <span className="text-xs font-semibold uppercase tracking-wide text-faint">Active</span>
-            {chips.map((chip) => (
-              <Chip key={chip.key} onRemove={() => removeChip(chip.key)} removeLabel={`Remove ${chip.label}`}>
-                {chip.label}
-              </Chip>
-            ))}
-          </>
-        ) : null}
+  const allSelected =
+    activeLeads.length > 0 && activeLeads.every((lead) => selectedSet.has(lead.id));
 
-        <div className="ml-auto flex items-center gap-2">
+  return (
+    <AppShell title="Ask Angie" description="Find leads on the left, talk it through on the right.">
+      <div className="lg:grid lg:grid-cols-[minmax(320px,380px)_1fr] lg:items-start lg:gap-6">
+        {/* LEFT — results panel (persistent; never scrolls the chat away) */}
+        <aside className="mb-6 lg:mb-0 lg:sticky lg:top-6 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="font-semibold text-ink">Results</h2>
+              <p className="text-sm text-muted">
+                {hasActive
+                  ? `${activeLeads.length} lead${activeLeads.length === 1 ? "" : "s"}${
+                      selectedLeads.length ? ` · ${selectedLeads.length} selected` : ""
+                    }`
+                  : "No results yet"}
+              </p>
+            </div>
+            {hasActive ? (
+              <Button type="button" variant="ghost" size="sm" onClick={toggleAll}>
+                {allSelected ? "Clear" : "Select all"}
+              </Button>
+            ) : null}
+          </div>
+
+          {chips.length ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {chips.map((chip) => (
+                <Chip key={chip.key} onRemove={() => removeChip(chip.key)} removeLabel={`Remove ${chip.label}`}>
+                  {chip.label}
+                </Chip>
+              ))}
+            </div>
+          ) : null}
+
           {hasActive ? (
-            <>
+            <div className="mt-3 flex flex-wrap gap-2">
               <ExportMenu current={activeLeads} selected={selectedLeads} summary={session?.activeSearchSummary ?? ""} />
               <Button type="button" variant="secondary" size="sm" onClick={() => setSaveOpen(true)}>
                 <Save size={14} />
-                Save this list
+                Save
               </Button>
-            </>
+            </div>
           ) : null}
-          <button
-            type="button"
-            onClick={startFresh}
-            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold text-muted transition hover:text-accent"
+
+          <div className="mt-4 space-y-3">
+            {activeLeads.length ? (
+              activeLeads.map((lead) => (
+                <LeadCard
+                  key={lead.id}
+                  lead={lead}
+                  selected={selectedSet.has(lead.id)}
+                  onToggle={() => toggleLead(lead.id)}
+                  onCopyContact={() => void copyContact(lead)}
+                  copied={copiedId === lead.id}
+                  onStrategy={(id) => cardAction(id, "strategy")}
+                  onOutreach={(id) => cardAction(id, "outreach")}
+                />
+              ))
+            ) : (
+              <div className="rounded-2xl border border-dashed border-line-strong bg-surface p-6 text-center">
+                <p className="text-sm text-muted">
+                  Ask Angie for leads and they&rsquo;ll show up here — pick the ones you want, then
+                  export, save, or work them.
+                </p>
+              </div>
+            )}
+          </div>
+        </aside>
+
+        {/* RIGHT — conversation */}
+        <div className="flex min-w-0 flex-col">
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              onClick={startFresh}
+              className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold text-muted transition hover:text-accent"
+            >
+              <RotateCcw size={13} />
+              {COPY.newConversation}
+            </button>
+          </div>
+
+          <div className="mt-2 space-y-5">
+            {messages.length === 0 ? (
+              <div className="rounded-2xl border border-line bg-surface p-6">
+                <p className="text-sm text-ink">
+                  Hey — I&rsquo;m Angie. Tell me what kind of leads you&rsquo;re after and I&rsquo;ll
+                  pull them up on the left. Then we can refine, build a call list, draft outreach, or
+                  map out a plan — just keep talking.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {STARTERS.map((starter) => (
+                    <button
+                      key={starter}
+                      type="button"
+                      onClick={() => void send(starter)}
+                      disabled={!baseLoaded}
+                      className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-muted transition hover:border-accent hover:bg-accent-soft hover:text-accent-strong disabled:opacity-50"
+                    >
+                      {starter}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {messages.map((message) => (
+              <ChatBubble key={message.id} role={message.role}>
+                <MessageBody
+                  message={message}
+                  regenBusy={regenBusy}
+                  onRegenerate={regenerateEmail}
+                />
+              </ChatBubble>
+            ))}
+
+            {thinking ? <ThinkingBubble /> : null}
+            {baseError ? <p className="text-sm text-critical">{baseError}</p> : null}
+            <div ref={endRef} />
+          </div>
+
+          {/* Composer */}
+          <form
+            onSubmit={handleSubmit}
+            className="sticky bottom-0 mt-6 flex items-center gap-2 border-t border-line bg-canvas/90 py-4 backdrop-blur"
           >
-            <RotateCcw size={13} />
-            {COPY.newConversation}
-          </button>
+            <TextInput
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder={hasActive ? "Refine, ask, or say “draft outreach for the top 3”…" : COPY.askPlaceholder}
+              aria-label="Message Angie"
+              disabled={!baseLoaded}
+            />
+            <Button type="submit" busy={thinking} disabled={thinking || !input.trim()}>
+              <Send size={16} />
+              <span className="hidden sm:inline">Send</span>
+            </Button>
+          </form>
         </div>
       </div>
-
-      {/* Transcript */}
-      <div className="space-y-5">
-        {messages.length === 0 ? (
-          <div className="rounded-2xl border border-line bg-surface p-6">
-            <p className="text-sm text-ink">
-              Hey — I&rsquo;m Angie. Tell me what kind of leads you&rsquo;re after and I&rsquo;ll pull
-              them up. Then we can refine, build a call list, draft outreach, or map out a plan — just
-              keep talking.
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {STARTERS.map((starter) => (
-                <button
-                  key={starter}
-                  type="button"
-                  onClick={() => void send(starter)}
-                  disabled={!baseLoaded}
-                  className="rounded-full border border-line px-3 py-1.5 text-xs font-medium text-muted transition hover:border-accent hover:bg-accent-soft hover:text-accent-strong disabled:opacity-50"
-                >
-                  {starter}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {messages.map((message) => (
-          <ChatBubble key={message.id} role={message.role}>
-            <MessageBody
-              message={message}
-              byId={byId}
-              selectedSet={selectedSet}
-              copiedId={copiedId}
-              regenBusy={regenBusy}
-              onToggle={toggleLead}
-              onCopy={copyContact}
-              onCardAction={cardAction}
-              onRegenerate={regenerateEmail}
-            />
-          </ChatBubble>
-        ))}
-
-        {thinking ? <ThinkingBubble /> : null}
-        {baseError ? <p className="text-sm text-critical">{baseError}</p> : null}
-        <div ref={endRef} />
-      </div>
-
-      {/* Composer */}
-      <form
-        onSubmit={handleSubmit}
-        className="sticky bottom-0 mt-6 flex items-center gap-2 border-t border-line bg-canvas/90 py-4 backdrop-blur"
-      >
-        <TextInput
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder={hasActive ? "Refine, ask, or say “draft outreach for the top 3”…" : COPY.askPlaceholder}
-          aria-label="Message Angie"
-          disabled={!baseLoaded}
-        />
-        <Button type="submit" busy={thinking} disabled={thinking || !input.trim()}>
-          <Send size={16} />
-          <span className="hidden sm:inline">Send</span>
-        </Button>
-      </form>
 
       {session ? (
         <SaveListModal
@@ -516,49 +570,17 @@ export default function AskAngiePage() {
 
 function MessageBody({
   message,
-  byId,
-  selectedSet,
-  copiedId,
   regenBusy,
-  onToggle,
-  onCopy,
-  onCardAction,
   onRegenerate,
 }: {
   message: ChatMessage;
-  byId: Map<string, Lead>;
-  selectedSet: Set<string>;
-  copiedId: string | null;
   regenBusy: string[];
-  onToggle: (id: string) => void;
-  onCopy: (lead: Lead) => void;
-  onCardAction: (leadId: string, kind: "strategy" | "outreach") => void;
   onRegenerate: (messageId: string, leadId: string, modifier: OutreachModifier) => void;
 }) {
+  // Result cards live in the left results panel now; in the chat, a results turn
+  // is just Angie's narration ("Here's what I found — 12 leads…").
   if (message.kind === "results") {
-    const ids = (message.data as { leadIds: string[] })?.leadIds ?? [];
-    const leads = ids.map((id) => byId.get(id)).filter(Boolean) as Lead[];
-    return (
-      <div>
-        <p>{message.text}</p>
-        {leads.length ? (
-          <div className="mt-3 space-y-3">
-            {leads.map((lead) => (
-              <LeadCard
-                key={lead.id}
-                lead={lead}
-                selected={selectedSet.has(lead.id)}
-                onToggle={() => onToggle(lead.id)}
-                onCopyContact={() => onCopy(lead)}
-                copied={copiedId === lead.id}
-                onStrategy={(id) => onCardAction(id, "strategy")}
-                onOutreach={(id) => onCardAction(id, "outreach")}
-              />
-            ))}
-          </div>
-        ) : null}
-      </div>
-    );
+    return <p className="whitespace-pre-wrap">{message.text}</p>;
   }
 
   if (message.kind === "strategy") {
