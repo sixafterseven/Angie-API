@@ -183,10 +183,16 @@ export default function AskAngiePage() {
     };
   }, []);
 
+  // Persist on any session/transcript change...
   useEffect(() => {
     if (session) savePersisted(session, messages);
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [session, messages]);
+
+  // ...but only autoscroll when a new message arrives or Angie starts thinking —
+  // NOT when the session changes for other reasons (e.g. selecting a lead).
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages.length, thinking]);
 
   function pushMessage(message: ChatMessage) {
     setMessages((current) => [...current, message]);
