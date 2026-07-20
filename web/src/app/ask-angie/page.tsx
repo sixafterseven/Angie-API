@@ -410,10 +410,28 @@ export default function AskAngiePage() {
   const allSelected =
     activeLeads.length > 0 && activeLeads.every((lead) => selectedSet.has(lead.id));
 
+  // Until Angie has pulled leads, keep it a single, focused conversation so it's
+  // obvious where to talk. Once there are results, split into results + chat.
+  const twoPane = hasActive;
+
   return (
-    <AppShell title="Ask Angie" description="Find leads on the left, talk it through on the right.">
-      <div className="lg:grid lg:grid-cols-[minmax(320px,380px)_1fr] lg:items-start lg:gap-6">
-        {/* LEFT — results panel (persistent; never scrolls the chat away) */}
+    <AppShell
+      title="Ask Angie"
+      description={
+        twoPane
+          ? "Your leads are on the left — keep talking to refine or work them."
+          : "Tell Angie what you're looking for."
+      }
+    >
+      <div
+        className={
+          twoPane
+            ? "lg:grid lg:grid-cols-[minmax(320px,380px)_1fr] lg:items-start lg:gap-6"
+            : ""
+        }
+      >
+        {/* LEFT — results panel (only once there are results) */}
+        {twoPane ? (
         <aside className="mb-6 lg:mb-0 lg:sticky lg:top-6 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto">
           <div className="flex items-center justify-between gap-2">
             <div>
@@ -477,9 +495,10 @@ export default function AskAngiePage() {
             )}
           </div>
         </aside>
+        ) : null}
 
-        {/* RIGHT — conversation */}
-        <div className="flex min-w-0 flex-col">
+        {/* RIGHT — conversation (centered on its own until results appear) */}
+        <div className={twoPane ? "flex min-w-0 flex-col" : "mx-auto flex min-w-0 max-w-2xl flex-col"}>
           <div className="flex items-center justify-end">
             <button
               type="button"
@@ -495,9 +514,9 @@ export default function AskAngiePage() {
             {messages.length === 0 ? (
               <div className="rounded-2xl border border-line bg-surface p-6">
                 <p className="text-sm text-ink">
-                  Hey — I&rsquo;m Angie. Tell me what kind of leads you&rsquo;re after and I&rsquo;ll
-                  pull them up on the left. Then we can refine, build a call list, draft outreach, or
-                  map out a plan — just keep talking.
+                  Hey — I&rsquo;m Angie. Type what kind of leads you&rsquo;re after in the box below
+                  and I&rsquo;ll pull them up. From there we can refine, build a call list, draft
+                  outreach, or map out a plan — just keep talking.
                 </p>
                 <div className="mt-4 flex flex-wrap gap-2">
                   {STARTERS.map((starter) => (
