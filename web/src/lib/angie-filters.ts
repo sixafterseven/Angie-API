@@ -28,7 +28,7 @@ export type AngieFilters = {
   sort?: LeadSort;
 };
 
-export type AngieAction = "call_list" | "email" | "strategy";
+export type AngieAction = "call_list" | "email" | "strategy" | "comparison";
 
 /** The only filter keys Angie is ever allowed to produce. */
 const ALLOWED_FILTER_KEYS = [

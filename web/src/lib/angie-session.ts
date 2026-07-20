@@ -20,6 +20,13 @@ export type AngieIntent =
   | "refine"
   | "lead_question"
   | "strategy"
+  | "opportunity_strategy"
+  | "service_match"
+  | "channel_plan"
+  | "campaign_ideas"
+  | "follow_up_plan"
+  | "lead_comparison"
+  | "research_request"
   | "outreach"
   | "export"
   | "smalltalk";
@@ -29,7 +36,7 @@ export type ChatMessage = {
   id: string;
   role: "user" | "angie";
   text: string;
-  kind?: "text" | "results" | "strategy" | "email" | "call_list" | "export";
+  kind?: "text" | "results" | "strategy" | "email" | "comparison" | "call_list" | "export";
   data?: unknown;
   createdAt: number;
 };
