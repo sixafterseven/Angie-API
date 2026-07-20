@@ -16,6 +16,9 @@
 export const APPROVED_EMPLOYEE_EMAILS = [
   "jason@micahamari.com",
   "admin7@sixafterseven.com",
+  "kris@micahamari.com",
+  "alexa@micahamari.com",
+  "oreonna@micahamari.com",
 ];
 
 /** Shown to anyone who signs in with a Google account that is not approved. */
